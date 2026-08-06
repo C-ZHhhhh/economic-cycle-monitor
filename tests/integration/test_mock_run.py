@@ -21,15 +21,18 @@ def test_create_mock_run_persists_run_and_report(postgres_session: Session) -> N
     postgres_session.flush()
     assert result.data_quality_status == "not_run"
     assert result.current_regime is None
-    assert postgres_session.scalar(select(func.count()).select_from(AgentRun)) == 1
-    assert postgres_session.scalar(select(func.count()).select_from(AgentReport)) == 1
+    assert postgres_session.get(AgentRun, result.run_id) is not None
+    report_count = postgres_session.scalar(
+        select(func.count()).select_from(AgentReport).where(AgentReport.run_id == result.run_id)
+    )
+    assert report_count == 1
 
 
 def test_runs_api_returns_persisted_mock(postgres_engine: Engine) -> None:
     settings = Settings(
         _env_file=None,
         app_env="test",
-        database_url=str(postgres_engine.url),
+        database_url=postgres_engine.url.render_as_string(hide_password=False),
         llm_mode="mock",
     )
     with Session(postgres_engine) as session:

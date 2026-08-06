@@ -18,7 +18,7 @@ def test_cli_create_mock_run_against_postgres(
     postgres_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
-    monkeypatch.setenv("DATABASE_URL", str(postgres_engine.url))
+    monkeypatch.setenv("DATABASE_URL", postgres_engine.url.render_as_string(hide_password=False))
     result = runner.invoke(cli.app, ["create-mock-run"])
     assert result.exit_code == 0, result.output
     run_id = UUID(result.output.strip().rsplit(" ", maxsplit=1)[-1])
