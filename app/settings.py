@@ -1,6 +1,8 @@
 """Application configuration loaded from environment variables."""
 
+from datetime import date
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import Field, HttpUrl, SecretStr, model_validator
@@ -32,6 +34,20 @@ class Settings(BaseSettings):
     llm_mode: Literal["mock", "live"] = "mock"
 
     fred_api_key: SecretStr | None = None
+    fred_base_url: HttpUrl = HttpUrl("https://api.stlouisfed.org/fred")
+    fred_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    fred_max_retries: int = Field(default=3, ge=0, le=8)
+    fred_retry_base_seconds: float = Field(default=1.0, ge=0, le=30)
+    fred_cache_enabled: bool = True
+    fred_cache_ttl_seconds: int = Field(default=3600, ge=0)
+    fred_default_backfill_start: date = date(2000, 1, 1)
+    fred_weekly_lookback_days: int = Field(default=90, ge=1)
+    fred_monthly_lookback_months: int = Field(default=18, ge=1)
+    fred_quarterly_lookback_quarters: int = Field(default=12, ge=1)
+    database_batch_size: int = Field(default=1000, ge=100, le=5000)
+    raw_data_dir: Path = Path("data/raw")
+    cache_dir: Path = Path("data/cache")
+    output_dir: Path = Path("outputs")
     bea_api_key: SecretStr | None = None
     bls_api_key: SecretStr | None = None
     census_api_key: SecretStr | None = None
@@ -44,8 +60,8 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = False
 
     @model_validator(mode="after")
-    def validate_stage_one_constraints(self) -> "Settings":
-        """Enforce the resource and secret requirements for this stage."""
+    def validate_stage_constraints(self) -> "Settings":
+        """Enforce the resource and secret requirements for Stage 2."""
         if not self.database_url.startswith("postgresql+psycopg://"):
             raise ValueError("DATABASE_URL must use postgresql+psycopg")
         if self.per_source_fetch_concurrency > self.fetch_concurrency:
@@ -58,9 +74,9 @@ class Settings(BaseSettings):
                 self.backtest_concurrency,
             )
         ):
-            raise ValueError("Stage 1 analysis, LLM, and backtest concurrency must remain 1")
+            raise ValueError("Stage 2 analysis, LLM, and backtest concurrency must remain 1")
         if self.scheduler_enabled:
-            raise ValueError("SCHEDULER_ENABLED must remain false in Stage 1")
+            raise ValueError("SCHEDULER_ENABLED must remain false in Stage 2")
         if self.llm_mode == "live" and (not self.llm_model or self.deepseek_api_key is None):
             raise ValueError("Live LLM mode requires LLM_MODEL and DEEPSEEK_API_KEY")
         return self
@@ -78,6 +94,9 @@ class Settings(BaseSettings):
             "llm_mode": self.llm_mode,
             "deepseek_api_key": "***" if self.deepseek_api_key else None,
             "fred_api_key": "***" if self.fred_api_key else None,
+            "fred_base_url": str(self.fred_base_url),
+            "fred_cache_enabled": self.fred_cache_enabled,
+            "fred_cache_ttl_seconds": self.fred_cache_ttl_seconds,
             "bea_api_key": "***" if self.bea_api_key else None,
             "bls_api_key": "***" if self.bls_api_key else None,
             "census_api_key": "***" if self.census_api_key else None,

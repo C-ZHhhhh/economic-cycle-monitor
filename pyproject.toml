@@ -17,6 +17,8 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
   "pydantic>=2.9,<3",
   "pydantic-settings>=2.5,<3",
+  "python-dateutil>=2.9,<3",
+  "PyYAML>=6.0,<7",
   "sqlalchemy>=2.0.36,<3",
   "structlog>=24.4,<26",
   "typer>=0.15,<1",
@@ -30,6 +32,8 @@ dev = [
   "pytest-asyncio>=0.24,<1",
   "pytest-cov>=6,<7",
   "ruff>=0.8,<1",
+  "types-python-dateutil>=2.9,<3",
+  "types-PyYAML>=6.0,<7",
 ]
 
 [project.scripts]
@@ -39,10 +43,11 @@ economic-cycle-monitor = "app.cli:app"
 packages = ["app", "agents"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -ra"
+addopts = "--strict-config --strict-markers -ra -m 'not live'"
 testpaths = ["tests"]
 markers = [
   "integration: requires a reachable PostgreSQL 16-compatible database",
+  "live: explicitly permitted tests that may call a real external API",
 ]
 asyncio_mode = "auto"
 
@@ -55,6 +60,7 @@ select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
 "migrations/versions/*.py" = ["E501"]
+"app/cli.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"
