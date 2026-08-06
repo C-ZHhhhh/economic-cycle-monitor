@@ -8,6 +8,7 @@ from app.api.routes import (
     health,
     indicators,
     macro,
+    official_sources,
     runs,
     sync_runs,
     system,
@@ -22,3 +23,4 @@ router.include_router(indicators.router, prefix="/api/v1/indicators", tags=["ind
 router.include_router(data_sources.router, prefix="/api/v1/data-sources", tags=["data-sources"])
 router.include_router(data_quality.router, prefix="/api/v1/data-quality", tags=["data-quality"])
 router.include_router(sync_runs.router, prefix="/api/v1/sync-runs", tags=["sync-runs"])
+router.include_router(official_sources.router, prefix="/api/v1", tags=["official-sources"])

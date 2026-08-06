@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_request_session
-from app.database.models import DataSourceRequest, IndicatorRegistry
+from app.database.models import DataSourceRequest, IndicatorRegistry, IndicatorSourceMapping
 
 router = APIRouter()
 SessionDependency = Annotated[Session, Depends(get_request_session)]
@@ -61,6 +61,58 @@ def fred_status(request: Request, session: SessionDependency) -> dict[str, Any]:
         },
         "registered_indicator_count": registered,
         "validated_indicator_count": validated,
+        "latest_success": _request_summary(latest_success),
+        "latest_failure": _request_summary(latest_failure),
+    }
+
+
+@router.get("/bls/status")
+def bls_status(request: Request, session: SessionDependency) -> dict[str, Any]:
+    """Report BLS configuration, mapping counts, and secret-free activity."""
+    latest_success = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == "bls", DataSourceRequest.success.is_(True))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    latest_failure = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == "bls", DataSourceRequest.success.is_(False))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    mapping_count = (
+        session.scalar(
+            select(func.count())
+            .select_from(IndicatorSourceMapping)
+            .where(IndicatorSourceMapping.source == "bls", IndicatorSourceMapping.enabled.is_(True))
+        )
+        or 0
+    )
+    usable_count = (
+        session.scalar(
+            select(func.count())
+            .select_from(IndicatorSourceMapping)
+            .where(
+                IndicatorSourceMapping.source == "bls",
+                IndicatorSourceMapping.enabled.is_(True),
+                IndicatorSourceMapping.mapping_status.in_({"valid", "valid_with_warning"}),
+            )
+        )
+        or 0
+    )
+    settings = request.app.state.settings
+    return {
+        "enabled": settings.bls_enabled,
+        "configured": settings.bls_api_key is not None,
+        "api_key_configured": settings.bls_api_key is not None,
+        "base_url": str(settings.bls_base_url),
+        "cache": {
+            "enabled": settings.bls_cache_enabled,
+            "ttl_seconds": settings.bls_cache_ttl_seconds,
+        },
+        "registered_mapping_count": mapping_count,
+        "usable_mapping_count": usable_count,
         "latest_success": _request_summary(latest_success),
         "latest_failure": _request_summary(latest_failure),
     }

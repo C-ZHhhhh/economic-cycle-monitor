@@ -68,3 +68,28 @@ class SyncOptions(PipelineSelection):
     since: date | None = None
     lookback_days: int | None = None
     dry_run: bool = False
+
+
+class BlsBackfillOptions(PipelineSelection):
+    """Bounded BLS historical request options expressed in source years."""
+
+    start_year: int = Field(ge=1913, le=2100)
+    end_year: int = Field(ge=1913, le=2100)
+    dry_run: bool = False
+
+
+class BlsSyncOptions(PipelineSelection):
+    """Incremental BLS synchronization options."""
+
+    dry_run: bool = False
+
+
+class SourceComparisonOptions(PipelineSelection):
+    """Bounded source-to-source comparison options."""
+
+    primary_source: str = "bls"
+    secondary_source: str = "fred"
+    start: date | None = None
+    end: date | None = None
+    page_size: int = Field(default=500, ge=50, le=2000)
+    dry_run: bool = False

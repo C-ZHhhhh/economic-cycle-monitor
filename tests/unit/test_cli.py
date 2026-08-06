@@ -73,6 +73,12 @@ def test_every_stage_two_command_has_help() -> None:
         "check-data-quality",
         "show-sync-status",
         "clear-fred-cache",
+        "validate-bls-mappings",
+        "backfill-bls",
+        "sync-bls",
+        "compare-sources",
+        "show-source-status",
+        "clear-bls-cache",
     ]
 
     for command in commands:

@@ -25,6 +25,9 @@ def _registry_payload(item: Any) -> dict[str, Any]:
         "module": item.module,
         "owner_agent": item.owner_agent,
         "fred_series_id": item.fred_series_id,
+        "primary_source": item.primary_source,
+        "primary_source_series_id": item.primary_source_series_id,
+        "fallback_source": item.fallback_source,
         "observation_frequency": item.observation_frequency,
         "release_frequency": item.release_frequency,
         "unit": item.unit,
@@ -115,6 +118,7 @@ def indicator_observations(
     end: date | None = None,
     current_only: bool = True,
     vintage_date: date | None = None,
+    source: str | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=1000),
 ) -> list[dict[str, Any]]:
@@ -129,12 +133,16 @@ def indicator_observations(
         )
         if vintage_date is not None:
             statement = statement.where(ObservationVintage.vintage_date == vintage_date)
+        if source is not None:
+            statement = statement.where(ObservationVintage.source == source.lower())
         if start is not None:
             statement = statement.where(ObservationVintage.observation_date >= start)
         if end is not None:
             statement = statement.where(ObservationVintage.observation_date <= end)
         rows = session.scalars(
-            statement.order_by(ObservationVintage.observation_date).offset(offset).limit(limit)
+            statement.order_by(ObservationVintage.observation_date, ObservationVintage.source)
+            .offset(offset)
+            .limit(limit)
         ).all()
         return [
             {
@@ -147,12 +155,16 @@ def indicator_observations(
             for row in rows
         ]
     current_statement = select(RawObservation).where(RawObservation.indicator_id == indicator_id)
+    if source is not None:
+        current_statement = current_statement.where(RawObservation.source == source.lower())
     if start is not None:
         current_statement = current_statement.where(RawObservation.observation_date >= start)
     if end is not None:
         current_statement = current_statement.where(RawObservation.observation_date <= end)
     current_rows = session.scalars(
-        current_statement.order_by(RawObservation.observation_date).offset(offset).limit(limit)
+        current_statement.order_by(RawObservation.observation_date, RawObservation.source)
+        .offset(offset)
+        .limit(limit)
     ).all()
     return [
         {

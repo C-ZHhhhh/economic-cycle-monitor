@@ -1,4 +1,4 @@
-"""Command-line interface for Stage 1 foundations and Stage 2 FRED operations."""
+"""Command-line interface for Stage 1 and Stage 2 official-source operations."""
 
 import asyncio
 import json
@@ -17,18 +17,31 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from agents.macro.service import create_mock_run as create_mock_run_service
+from app.data_pipeline.bls_service import BlsPipelineService
 from app.data_pipeline.repository import finish_sync_run, start_sync_run
-from app.data_pipeline.schemas import BackfillOptions, PipelineSelection, SyncOptions, SyncSummary
+from app.data_pipeline.schemas import (
+    BackfillOptions,
+    BlsBackfillOptions,
+    BlsSyncOptions,
+    PipelineSelection,
+    SourceComparisonOptions,
+    SyncOptions,
+    SyncSummary,
+)
 from app.data_pipeline.service import FredPipelineService
+from app.data_pipeline.source_comparison import SourceComparisonService
 from app.data_quality.service import run_database_quality_checks
+from app.data_sources.bls.factory import create_bls_client
 from app.data_sources.fred.factory import create_fred_client
-from app.database.models import SyncRun
+from app.database.models import DataSourceRequest, IndicatorSourceMapping, SyncRun
 from app.database.session import check_database, create_database_engine, db_session
 from app.indicators.config import load_indicator_catalog
 from app.indicators.repository import get_indicator
 from app.indicators.repository import list_indicators as query_indicators
 from app.indicators.service import seed_indicator_catalog
 from app.settings import Settings
+from app.source_mappings.config import load_source_mapping_catalog
+from app.source_mappings.repository import seed_source_mappings
 
 app = typer.Typer(
     name="economic-cycle-monitor",
@@ -90,6 +103,11 @@ def validate_config() -> None:
     typer.echo("OK: configuration is valid for Stage 2")
 
 
+def _require_bls_enabled(settings: Settings) -> None:
+    if not settings.bls_enabled:
+        _fail("BLS is disabled; set BLS_ENABLED=true before making BLS API requests")
+
+
 @app.command("create-mock-run")
 def create_mock_run() -> None:
     """Create one validated mock run and report in PostgreSQL."""
@@ -129,6 +147,7 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
             catalog = load_indicator_catalog()
             run = start_sync_run(session, "seed_indicators", {}, len(catalog.indicators))
             result = seed_indicator_catalog(session, catalog)
+            mapping_result = seed_source_mappings(session, load_source_mapping_catalog())
             summary = SyncSummary(
                 run_id=run.run_id,
                 operation=run.operation,
@@ -136,10 +155,14 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
                 indicator_count=len(catalog.indicators),
                 success_count=len(catalog.indicators),
                 inserted_count=result.inserted,
-                results=[result.model_dump()],
+                results=[result.model_dump(), {"bls_mappings": mapping_result.model_dump()}],
             )
             finish_sync_run(session, run, summary)
-            payload = {"run_id": run.run_id, **result.model_dump()}
+            payload = {
+                "run_id": run.run_id,
+                **result.model_dump(),
+                "bls_mappings": mapping_result.model_dump(),
+            }
     except (SQLAlchemyError, OSError, RuntimeError, ValueError):
         _fail("Indicator catalog could not be synchronized")
     finally:
@@ -326,7 +349,164 @@ async def _run_vintage(
         )
 
 
-PipelineOptions = BackfillOptions | SyncOptions | tuple[str, date]
+async def _run_validate_bls(
+    session: Session,
+    settings: Settings,
+    options: tuple[PipelineSelection, bool],
+) -> SyncSummary:
+    selection, dry_run = options
+    async with create_bls_client(settings) as client:
+        summary = await BlsPipelineService(session, settings, client).validate_mappings(selection)
+    if dry_run:
+        session.rollback()
+    return summary
+
+
+@app.command("validate-bls-mappings")
+def validate_bls_mappings_command(
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate reviewed BLS mappings using one official batch request."""
+    settings = _load_settings()
+    _require_bls_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_validate_bls,
+        (
+            PipelineSelection(indicator_id=indicator, module=module, enabled_only=enabled_only),
+            dry_run,
+        ),
+        "BLS mapping validation failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.status == "failed" or any(
+        result.get("status") == "invalid" for result in summary.results
+    ):
+        raise typer.Exit(code=1)
+
+
+async def _run_bls_backfill(
+    session: Session, settings: Settings, options: BlsBackfillOptions
+) -> SyncSummary:
+    async with create_bls_client(settings) as client:
+        return await BlsPipelineService(session, settings, client).backfill(options)
+
+
+@app.command("backfill-bls")
+def backfill_bls_command(
+    start: int = typer.Option(2000, min=1913, max=2100),
+    end: int = typer.Option(date.today().year, min=1913, max=2100),
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Backfill BLS history in configured inclusive year windows."""
+    settings = _load_settings()
+    _require_bls_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_bls_backfill,
+        BlsBackfillOptions(
+            indicator_id=indicator,
+            module=module,
+            enabled_only=enabled_only,
+            start_year=start,
+            end_year=end,
+            dry_run=dry_run,
+        ),
+        "BLS backfill failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.status == "failed":
+        raise typer.Exit(code=1)
+
+
+async def _run_bls_sync(
+    session: Session, settings: Settings, options: BlsSyncOptions
+) -> SyncSummary:
+    async with create_bls_client(settings) as client:
+        return await BlsPipelineService(session, settings, client).sync(options)
+
+
+@app.command("sync-bls")
+def sync_bls_command(
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Incrementally synchronize BLS data with revision lookbacks."""
+    settings = _load_settings()
+    _require_bls_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_bls_sync,
+        BlsSyncOptions(
+            indicator_id=indicator,
+            module=module,
+            enabled_only=enabled_only,
+            dry_run=dry_run,
+        ),
+        "BLS incremental synchronization failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.status == "failed":
+        raise typer.Exit(code=1)
+
+
+@app.command("compare-sources")
+def compare_sources_command(
+    primary: str = typer.Option("bls"),
+    secondary: str = typer.Option("fred"),
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    start: str | None = typer.Option(None),
+    end: str | None = typer.Option(None),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Compare independently stored BLS and FRED observations in pages."""
+    primary_source = primary.lower()
+    secondary_source = secondary.lower()
+    if (primary_source, secondary_source) != ("bls", "fred"):
+        _fail("Stage 2B-1 supports only --primary bls --secondary fred")
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        with db_session(engine) as session:
+            summary = SourceComparisonService(session).compare(
+                SourceComparisonOptions(
+                    primary_source=primary_source,
+                    secondary_source=secondary_source,
+                    indicator_id=indicator,
+                    module=module,
+                    start=_parse_date(start, "--start") if start else None,
+                    end=_parse_date(end, "--end") if end else None,
+                    dry_run=dry_run,
+                )
+            )
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError):
+        _fail("Source comparison failed")
+    finally:
+        engine.dispose()
+    _render(summary.model_dump(mode="json"), json_output)
+
+
+PipelineOptions = (
+    BackfillOptions
+    | SyncOptions
+    | BlsBackfillOptions
+    | BlsSyncOptions
+    | tuple[str, date]
+    | tuple[PipelineSelection, bool]
+)
 
 
 def _execute_async_pipeline(
@@ -424,6 +604,55 @@ def show_sync_status_command(
     _render(payload, json_output)
 
 
+@app.command("show-source-status")
+def show_source_status_command(
+    source: str = typer.Argument("bls"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Show secret-free BLS configuration, mapping, and request status."""
+    normalized = source.lower()
+    if normalized != "bls":
+        _fail("Stage 2B-1 source status supports only BLS")
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        with db_session(engine) as session:
+            mappings = session.query(IndicatorSourceMapping).filter_by(source="bls").all()
+            latest = (
+                session.query(DataSourceRequest)
+                .filter_by(source="bls")
+                .order_by(DataSourceRequest.finished_at.desc())
+                .first()
+            )
+            payload = {
+                "source": "bls",
+                "enabled": settings.bls_enabled,
+                "api_key_configured": settings.bls_api_key is not None,
+                "base_url": str(settings.bls_base_url),
+                "mapping_count": len(mappings),
+                "mapping_status_counts": {
+                    status: sum(item.mapping_status == status for item in mappings)
+                    for status in sorted({item.mapping_status for item in mappings})
+                },
+                "latest_request": (
+                    {
+                        "finished_at": latest.finished_at,
+                        "success": latest.success,
+                        "http_status": latest.http_status,
+                        "from_cache": latest.from_cache,
+                        "error_type": latest.error_type,
+                    }
+                    if latest is not None
+                    else None
+                ),
+            }
+    except (SQLAlchemyError, OSError):
+        _fail("BLS source status could not be loaded")
+    finally:
+        engine.dispose()
+    _render(payload, json_output)
+
+
 @app.command("clear-fred-cache")
 def clear_fred_cache_command() -> None:
     """Remove only the configured FRED cache directory."""
@@ -435,6 +664,19 @@ def clear_fred_cache_command() -> None:
     if target.exists():
         shutil.rmtree(target)
     typer.echo("OK: FRED cache is clear")
+
+
+@app.command("clear-bls-cache")
+def clear_bls_cache_command() -> None:
+    """Remove only the configured BLS cache directory."""
+    settings = _load_settings()
+    target = (settings.cache_dir / "bls").resolve()
+    cache_root = settings.cache_dir.resolve()
+    if target.parent != cache_root:
+        _fail("Configured BLS cache path is unsafe")
+    if target.exists():
+        shutil.rmtree(target)
+    typer.echo("OK: BLS cache is clear")
 
 
 if __name__ == "__main__":

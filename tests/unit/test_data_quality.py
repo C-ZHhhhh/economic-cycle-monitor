@@ -17,9 +17,9 @@ def _observation(observation_date: str, value: str) -> FredObservation:
     )
 
 
-def test_all_15_required_quality_rules_are_registered() -> None:
-    assert len(QUALITY_RULES) == 15
-    assert len(set(QUALITY_RULES)) == 15
+def test_all_stage_two_and_official_source_quality_rules_are_registered() -> None:
+    assert len(QUALITY_RULES) == 28
+    assert len(set(QUALITY_RULES)) == 28
     assert {
         "missing_value",
         "duplicate_observation",
@@ -36,6 +36,19 @@ def test_all_15_required_quality_rules_are_registered() -> None:
         "source_unavailable",
         "raw_response_hash_conflict",
         "duplicate_vintage",
+        "source_mapping_missing",
+        "source_metadata_mismatch",
+        "source_series_unavailable",
+        "source_response_partial",
+        "source_business_error",
+        "distribution_lag",
+        "missing_in_primary_source",
+        "missing_in_fallback_source",
+        "normalization_mismatch",
+        "seasonal_adjustment_mismatch",
+        "source_value_conflict",
+        "source_revision_detected",
+        "duplicate_official_observation",
     } == set(QUALITY_RULES)
 
 
