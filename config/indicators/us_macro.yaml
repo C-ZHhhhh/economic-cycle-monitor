@@ -1,0 +1,8 @@
+schema_version: "0.1.0"
+agent: us_macro_cycle_agent
+country: US
+stage: foundation
+indicators: []
+notes:
+  - Real indicator definitions are intentionally deferred beyond Stage 1.
+  - Source identifiers, weights, and thresholds must be reviewed before activation.

@@ -1,0 +1,8 @@
+schema_version: "0.1.0"
+agent: us_macro_cycle_agent
+stage: foundation
+modules: {}
+thresholds: {}
+notes:
+  - No scoring logic is active in Stage 1.
+  - Future weights and thresholds belong in versioned configuration, not Python code.
