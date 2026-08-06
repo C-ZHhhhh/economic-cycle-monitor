@@ -29,7 +29,7 @@ from app.data_quality.checks import (
     check_observation_batch,
     source_unavailable_issue,
 )
-from app.data_quality.repository import persist_quality_issues
+from app.data_quality.repository import persist_quality_issues, reconcile_quality_issues
 from app.data_sources.fred.client import FredClient
 from app.data_sources.fred.metadata import validate_series_metadata
 from app.data_sources.fred.schemas import (
@@ -145,11 +145,19 @@ class FredPipelineService:
             )
             definition = self._definitions[indicator.indicator_id]
             validation = validate_series_metadata(definition, metadata)
-            summary.quality_event_count += persist_quality_issues(
+            metadata_issues = check_metadata_validation(indicator.indicator_id, validation)
+            inserted, _resolved = reconcile_quality_issues(
                 self.session,
-                check_metadata_validation(indicator.indicator_id, validation),
+                metadata_issues,
                 run_id=run.run_id,
+                indicator_id=indicator.indicator_id,
+                event_types=(
+                    "metadata_frequency_mismatch",
+                    "metadata_unit_mismatch",
+                    "metadata_seasonal_adjustment_mismatch",
+                ),
             )
+            summary.quality_event_count += inserted
             indicator.metadata_status = validation.status
             indicator.metadata_checked_at = datetime.now(UTC)
             indicator.source_title = metadata.title

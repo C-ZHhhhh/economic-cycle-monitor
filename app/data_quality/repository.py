@@ -43,6 +43,35 @@ def persist_quality_issues(
     return inserted
 
 
+def reconcile_quality_issues(
+    session: Session,
+    issues: Sequence[QualityIssue],
+    *,
+    run_id: UUID | None,
+    indicator_id: str,
+    event_types: Sequence[str],
+) -> tuple[int, int]:
+    """Persist current findings and resolve scoped findings no longer present."""
+    active_fingerprints = {issue.fingerprint for issue in issues}
+    now = datetime.now(UTC)
+    unresolved = session.scalars(
+        select(DataQualityEvent).where(
+            DataQualityEvent.indicator_id == indicator_id,
+            DataQualityEvent.event_type.in_(event_types),
+            DataQualityEvent.resolved_at.is_(None),
+        )
+    ).all()
+    resolved = 0
+    for event in unresolved:
+        if event.event_fingerprint in active_fingerprints:
+            continue
+        event.resolved_at = now
+        event.resolution_notes = "Condition was absent from the latest scoped validation"
+        resolved += 1
+    inserted = persist_quality_issues(session, issues, run_id=run_id)
+    return inserted, resolved
+
+
 def list_quality_events(
     session: Session,
     *,

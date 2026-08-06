@@ -6,6 +6,14 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class MetadataValidationConfig(BaseModel):
+    """Configurable source-unit aliases shared by all indicators."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    unit_aliases: dict[str, list[list[str]]]
+
+
 class IndicatorDefinition(BaseModel):
     """One versioned US macro indicator definition."""
 
@@ -31,6 +39,8 @@ class IndicatorDefinition(BaseModel):
     enabled: bool
     config_version: str
     title_keywords: list[str] = Field(default_factory=list)
+    title_keyword_groups: list[list[str]] = Field(default_factory=list)
+    unit_aliases: list[list[str]] = Field(default_factory=list)
 
 
 class IndicatorCatalog(BaseModel):
@@ -42,6 +52,7 @@ class IndicatorCatalog(BaseModel):
     agent: str
     country: str
     stage: str
+    metadata_validation: MetadataValidationConfig
     indicators: list[IndicatorDefinition]
     source_path: Path
 

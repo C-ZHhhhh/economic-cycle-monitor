@@ -25,19 +25,6 @@ FREQUENCY_ALIASES = {
     "annual": "annual",
 }
 
-UNIT_TOKENS = {
-    "percent": ("percent",),
-    "index": ("index",),
-    "number": ("number",),
-    "hours": ("hours",),
-    "ratio": ("ratio",),
-    "chained_dollars": ("chained", "dollars"),
-    "millions_dollars": ("millions", "dollars"),
-    "thousands_persons": ("thousands", "persons"),
-    "thousands_units": ("thousands", "units"),
-    "dollars_per_hour": ("dollars", "hour"),
-}
-
 SEASONAL_TOKENS = {
     "seasonally_adjusted": ("seasonally adjusted",),
     "seasonally_adjusted_annual_rate": ("seasonally adjusted annual rate",),
@@ -47,6 +34,14 @@ SEASONAL_TOKENS = {
 
 def _normalized(value: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
+
+
+def _contains_term(normalized_text: str, term: str) -> bool:
+    """Match one normalized token or a contiguous multi-token phrase."""
+    normalized_term = _normalized(term)
+    if " " in normalized_term:
+        return normalized_term in normalized_text
+    return normalized_term in normalized_text.split()
 
 
 class MetadataValidationResult(BaseModel):
@@ -81,8 +76,11 @@ def validate_series_metadata(
         )
 
     source_units = _normalized(metadata.units)
-    unit_tokens = UNIT_TOKENS.get(definition.expected_unit, ())
-    if not unit_tokens or not all(token in source_units for token in unit_tokens):
+    unit_matches = any(
+        alias and all(_contains_term(source_units, token) for token in alias)
+        for alias in definition.unit_aliases
+    )
+    if not unit_matches:
         warnings.append(
             f"units {metadata.units!r} need review against expected {definition.expected_unit!r}"
         )
@@ -96,9 +94,16 @@ def validate_series_metadata(
         )
 
     title = _normalized(metadata.title)
-    missing_keywords = [keyword for keyword in definition.title_keywords if keyword not in title]
-    if missing_keywords:
-        warnings.append(f"title is missing expected semantic terms: {', '.join(missing_keywords)}")
+    keyword_groups = definition.title_keyword_groups or [
+        [keyword] for keyword in definition.title_keywords
+    ]
+    missing_groups = [
+        "/".join(group)
+        for group in keyword_groups
+        if not any(_contains_term(title, keyword) for keyword in group)
+    ]
+    if missing_groups:
+        warnings.append(f"title is missing expected semantic terms: {', '.join(missing_groups)}")
 
     status: MetadataStatus = "invalid" if errors else "valid_with_warning" if warnings else "valid"
     return MetadataValidationResult(

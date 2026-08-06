@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.data_pipeline.schemas import BackfillOptions
 from app.data_pipeline.service import FredPipelineService
 from app.data_quality.checks import QualityIssue
-from app.data_quality.repository import persist_quality_issues
+from app.data_quality.repository import persist_quality_issues, reconcile_quality_issues
 from app.data_sources.fred.cache import FredFileCache
 from app.data_sources.fred.client import FredClient
 from app.data_sources.fred.raw_store import FredRawStore
@@ -53,6 +53,39 @@ def test_quality_issue_date_details_are_json_serializable(
     assert inserted == 1
     assert event is not None
     assert event.details_json == {"observation_date": "2000-01-01"}
+
+
+def test_scoped_quality_reconciliation_preserves_history_and_resolves_absent_findings(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    issue = QualityIssue(
+        indicator_id="US_HIRES",
+        event_type="metadata_unit_mismatch",
+        severity="warning",
+        message="Old unit warning",
+    )
+    persist_quality_issues(postgres_session, [issue], run_id=None)
+
+    inserted, resolved = reconcile_quality_issues(
+        postgres_session,
+        [],
+        run_id=None,
+        indicator_id="US_HIRES",
+        event_types=("metadata_unit_mismatch",),
+    )
+
+    event = postgres_session.scalar(
+        select(DataQualityEvent).where(
+            DataQualityEvent.indicator_id == "US_HIRES",
+            DataQualityEvent.event_type == "metadata_unit_mismatch",
+        )
+    )
+    assert inserted == 0
+    assert resolved == 1
+    assert event is not None
+    assert event.resolved_at is not None
+    assert event.resolution_notes is not None
 
 
 @pytest.mark.asyncio
