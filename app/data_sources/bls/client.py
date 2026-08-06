@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
@@ -194,7 +195,10 @@ class BlsClient:
         except (json.JSONDecodeError, UnicodeDecodeError, ValidationError) as error:
             raise BlsResponseError("BLS returned an invalid response envelope") from error
         if response.status != "REQUEST_SUCCEEDED":
-            raise BlsBusinessError(response.status)
+            raise BlsBusinessError(
+                response.status,
+                messages=self._safe_business_messages(response.message),
+            )
         digest = hashlib.sha256(body).hexdigest()
         path = None
         if archive:
@@ -214,3 +218,17 @@ class BlsClient:
             business_messages=response.message,
         )
         return response.Results.series, payload
+
+    def _safe_business_messages(self, messages: list[str]) -> list[str]:
+        """Redact the configured key and key-shaped fields from provider messages."""
+        secret = self._api_key.get_secret_value() if self._api_key is not None else None
+        safe: list[str] = []
+        for message in messages:
+            redacted = message.replace(secret, "***") if secret else message
+            redacted = re.sub(
+                r"(?i)(registration\s*key|registrationkey|api\s*key)(\s*[:=]?\s*)\S+",
+                r"\1\2***",
+                redacted,
+            )
+            safe.append(redacted)
+        return safe

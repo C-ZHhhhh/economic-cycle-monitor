@@ -23,6 +23,7 @@ def _response(
     series_ids: list[str],
     *,
     status: str = "REQUEST_SUCCEEDED",
+    messages: list[str] | None = None,
     data: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     points = data or [
@@ -37,7 +38,7 @@ def _response(
     return {
         "status": status,
         "responseTime": 1,
-        "message": [],
+        "message": messages or [],
         "Results": {
             "series": [{"seriesID": series_id, "data": points} for series_id in series_ids]
         },
@@ -95,7 +96,7 @@ async def test_batch_request_is_secret_free_outside_transport(tmp_path: Path) ->
 async def test_adapter_preserves_missing_preliminary_and_ignores_annual_average(
     tmp_path: Path,
 ) -> None:
-    data = [
+    data: list[dict[str, object]] = [
         {
             "year": "2025",
             "period": "M02",
@@ -149,14 +150,25 @@ async def test_http_success_business_failure_is_rejected(tmp_path: Path) -> None
     def handler(_: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(200, json=_response([], status="REQUEST_FAILED"))
+        return httpx.Response(
+            200,
+            json=_response(
+                [],
+                status="REQUEST_FAILED",
+                messages=[f"Invalid registration key: {TEST_CREDENTIAL}"],
+            ),
+        )
 
     async with _client(tmp_path, handler) as client:
-        with pytest.raises(BlsBusinessError, match="REQUEST_FAILED"):
+        with pytest.raises(BlsBusinessError, match="REQUEST_FAILED") as first:
             await client.get_series_data(["SERIES_A"], start_year=2025, end_year=2025)
         with pytest.raises(BlsBusinessError, match="REQUEST_FAILED"):
             await client.get_series_data(["SERIES_A"], start_year=2025, end_year=2025)
     assert calls == 2
+    assert first.value.messages == ["Invalid registration key: ***"]
+    assert TEST_CREDENTIAL not in str(first.value)
+    assert not (tmp_path / "cache").exists()
+    assert not (tmp_path / "raw").exists()
 
 
 @pytest.mark.asyncio

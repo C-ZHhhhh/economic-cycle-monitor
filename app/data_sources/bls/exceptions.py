@@ -23,6 +23,9 @@ class BlsResponseError(BlsError):
 class BlsBusinessError(BlsError):
     """HTTP-success response with a failed BLS business status."""
 
-    def __init__(self, status: str) -> None:
-        super().__init__(f"BLS returned business status {status!r}")
+    def __init__(self, status: str, *, messages: list[str] | None = None) -> None:
+        self.messages = messages or []
+        detail = "; ".join(self.messages[:5])
+        suffix = f": {detail}" if detail else ""
+        super().__init__(f"BLS returned business status {status!r}{suffix}")
         self.status = status
