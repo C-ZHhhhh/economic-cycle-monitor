@@ -1,0 +1,4 @@
+This directory contains versioned PostgreSQL schema migrations.
+
+Create a migration after every SQLAlchemy model change and review generated SQL
+before committing it. Apply migrations with `alembic upgrade head`.
