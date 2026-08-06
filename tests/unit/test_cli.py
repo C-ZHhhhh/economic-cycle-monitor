@@ -59,3 +59,23 @@ def test_cli_create_mock_run(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert str(run_id) in result.stdout
     assert engine.disposed
+
+
+def test_every_stage_two_command_has_help() -> None:
+    commands = [
+        "seed-indicators",
+        "list-indicators",
+        "show-indicator",
+        "validate-fred-metadata",
+        "backfill-fred",
+        "sync-fred",
+        "fetch-fred-vintage",
+        "check-data-quality",
+        "show-sync-status",
+        "clear-fred-cache",
+    ]
+
+    for command in commands:
+        result = runner.invoke(cli.app, [command, "--help"])
+        assert result.exit_code == 0, command
+        assert "Usage:" in result.stdout

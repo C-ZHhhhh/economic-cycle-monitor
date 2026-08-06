@@ -30,7 +30,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application = FastAPI(
         title="Economic Cycle Monitor",
-        description="Stage 1 foundation for the US Macro Cycle Agent.",
+        description="Stage 2 FRED data foundation for the US Macro Cycle Agent.",
         version=__version__,
         lifespan=lifespan,
     )
