@@ -17,6 +17,7 @@ def persist_quality_issues(
     """Insert findings idempotently while the same fingerprint remains unresolved."""
     inserted = 0
     for issue in issues:
+        serialized = issue.model_dump(mode="json")
         existing = session.scalar(
             select(DataQualityEvent.id).where(
                 DataQualityEvent.event_fingerprint == issue.fingerprint,
@@ -32,7 +33,7 @@ def persist_quality_issues(
                 event_type=issue.event_type,
                 severity=issue.severity,
                 message=issue.message,
-                details_json=issue.details,
+                details_json=serialized["details"],
                 event_fingerprint=issue.fingerprint,
                 detected_at=datetime.now(UTC),
             )

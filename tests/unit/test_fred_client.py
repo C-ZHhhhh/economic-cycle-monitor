@@ -184,6 +184,7 @@ async def test_server_error_and_timeout_retry_then_succeed(
         if calls == 1:
             if failure == "timeout":
                 raise httpx.ReadTimeout("offline timeout", request=request)
+            assert isinstance(failure, int)
             return httpx.Response(failure)
         return httpx.Response(200, json={"vintage_dates": []})
 

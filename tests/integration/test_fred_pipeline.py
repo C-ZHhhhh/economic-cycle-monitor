@@ -7,11 +7,13 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import BackfillOptions
 from app.data_pipeline.service import FredPipelineService
+from app.data_quality.checks import QualityIssue
+from app.data_quality.repository import persist_quality_issues
 from app.data_sources.fred.cache import FredFileCache
 from app.data_sources.fred.client import FredClient
 from app.data_sources.fred.raw_store import FredRawStore
@@ -24,6 +26,35 @@ from app.settings import Settings
 pytestmark = pytest.mark.integration
 
 
+def test_quality_issue_date_details_are_json_serializable(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    inserted = persist_quality_issues(
+        postgres_session,
+        [
+            QualityIssue(
+                indicator_id="US_UNEMPLOYMENT_RATE",
+                event_type="missing_value",
+                severity="warning",
+                message="FRED returned a missing observation value",
+                details={"observation_date": date(2000, 1, 1)},
+            )
+        ],
+        run_id=None,
+    )
+
+    event = postgres_session.scalar(
+        select(DataQualityEvent).where(
+            DataQualityEvent.indicator_id == "US_UNEMPLOYMENT_RATE",
+            DataQualityEvent.event_type == "missing_value",
+        )
+    )
+    assert inserted == 1
+    assert event is not None
+    assert event.details_json == {"observation_date": "2000-01-01"}
+
+
 @pytest.mark.asyncio
 async def test_backfill_is_idempotent_and_preserves_revision(
     postgres_session: Session, settings: Settings, tmp_path: Path
@@ -32,7 +63,7 @@ async def test_backfill_is_idempotent_and_preserves_revision(
     indicator = get_indicator(postgres_session, "US_REAL_GDP")
     assert indicator is not None
     indicator.metadata_status = "valid"
-    values = iter(["100.0", "100.0", "101.5"])
+    values = iter(["100.0", "100.0", "101.0"])
 
     def handler(_: httpx.Request) -> httpx.Response:
         value = next(values)
@@ -75,8 +106,12 @@ async def test_backfill_is_idempotent_and_preserves_revision(
     current = postgres_session.scalar(
         select(RawObservation).where(RawObservation.indicator_id == "US_REAL_GDP")
     )
-    assert current is not None and current.value == Decimal("101.5")
-    assert postgres_session.scalar(select(func.count()).select_from(ObservationVintage)) == 1
+    assert current is not None and current.value == Decimal("101.0")
+    vintage = postgres_session.scalar(select(ObservationVintage))
+    assert vintage is not None
+    assert vintage.previous_value == Decimal("100.0")
+    assert vintage.current_value == Decimal("101.0")
+    assert vintage.revision_number == 1
 
 
 @pytest.mark.asyncio
