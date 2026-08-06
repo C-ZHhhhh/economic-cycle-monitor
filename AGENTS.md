@@ -3,9 +3,10 @@
 ## Project goal and current scope
 
 This repository is the sole codebase for a personal global economic-cycle
-multi-agent monitoring system. The current scope is only Stage 1 of the US Macro
-Cycle Agent: project skeleton and data-foundation infrastructure. Do not implement
-other agents or Stage 2 functionality without explicit approval.
+multi-agent monitoring system. The current scope is only Stage 2 of the US Macro
+Cycle Agent: FRED ingestion, indicator registration, revisions, vintages, and data
+quality. Do not implement other agents or Stage 3 features, scoring, or regime
+functionality without explicit approval.
 
 ## Runtime and resource constraints
 
@@ -24,10 +25,13 @@ other agents or Stage 2 functionality without explicit approval.
 - Use UTC-aware datetimes.
 - Do not use bare `except` clauses or suppress exceptions silently.
 - Keep database Session lifetimes explicit and avoid circular imports.
-- Avoid abstractions that do not have a current Stage 1 use.
+- Avoid abstractions that do not have a current Stage 2 use.
 - Never hard-code indicator weights, scoring thresholds, API keys, or an LLM model
   name in Python. Version weights and thresholds in `config/`.
 - Agent output must validate against the canonical Pydantic schema.
+- Tests must not call a real external API unless explicitly marked `live` and
+  manually invoked.
+- Never change a configured FRED Series ID automatically after a metadata warning.
 
 ## Security
 

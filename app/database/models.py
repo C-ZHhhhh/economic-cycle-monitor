@@ -1,4 +1,4 @@
-"""SQLAlchemy models for Stage 1 macro-agent persistence."""
+"""SQLAlchemy models for macro-agent and Stage 2 FRED persistence."""
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -28,6 +28,7 @@ from app.database.base import Base, utc_now
 
 INDICATOR_FK = "indicator_registry.indicator_id"
 RUN_FK = "agent_runs.run_id"
+SYNC_RUN_FK = "sync_runs.run_id"
 
 
 class TimestampMixin:
@@ -42,7 +43,10 @@ class IndicatorRegistry(TimestampMixin, Base):
     """Versioned registry of economic indicators and their source metadata."""
 
     __tablename__ = "indicator_registry"
-    __table_args__ = (Index("ix_indicator_registry_module_enabled", "module", "enabled"),)
+    __table_args__ = (
+        Index("ix_indicator_registry_module_enabled", "module", "enabled"),
+        Index("ix_indicator_registry_metadata_status", "metadata_status"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     indicator_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
@@ -66,6 +70,24 @@ class IndicatorRegistry(TimestampMixin, Base):
         Boolean, default=True, server_default="true", nullable=False
     )
     config_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_status: Mapped[str] = mapped_column(
+        String(32), default="not_checked", server_default="not_checked", nullable=False
+    )
+    metadata_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_title: Mapped[str | None] = mapped_column(String(512))
+    source_description: Mapped[str | None] = mapped_column(Text)
+    source_notes: Mapped[str | None] = mapped_column(Text)
+    source_frequency: Mapped[str | None] = mapped_column(String(128))
+    source_units: Mapped[str | None] = mapped_column(String(255))
+    source_seasonal_adjustment: Mapped[str | None] = mapped_column(String(255))
+    source_observation_start: Mapped[date | None] = mapped_column(Date)
+    source_observation_end: Mapped[date | None] = mapped_column(Date)
+    source_last_updated: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_popularity: Mapped[int | None] = mapped_column(Integer)
+    source_release_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    metadata_warnings_json: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default="[]", nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
@@ -98,6 +120,7 @@ class RawObservation(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(128), nullable=False)
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     raw_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_vintage_date: Mapped[date | None] = mapped_column(Date)
 
 
 class ObservationVintage(TimestampMixin, Base):
@@ -110,6 +133,7 @@ class ObservationVintage(TimestampMixin, Base):
             "observation_date",
             "vintage_date",
             "revision_number",
+            "source",
             name="uq_observation_vintage_key",
         ),
         CheckConstraint("revision_number >= 0", name="revision_number_nonnegative"),
@@ -131,6 +155,98 @@ class ObservationVintage(TimestampMixin, Base):
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
     current_value: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(128), default="fred", server_default="fred", nullable=False
+    )
+    source_vintage_date: Mapped[date | None] = mapped_column(Date)
+    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    raw_payload_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+class SyncRun(TimestampMixin, Base):
+    """Auditable execution and counters for one data-pipeline operation."""
+
+    __tablename__ = "sync_runs"
+    __table_args__ = (
+        Index("ix_sync_runs_operation_started", "operation", "started_at"),
+        Index("ix_sync_runs_status_started", "status", "started_at"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    indicator_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    skipped_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    inserted_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    revised_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    quality_event_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cache_hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_summary_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+
+
+class DataSourceRequest(TimestampMixin, Base):
+    """Secret-free audit record for one logical data-source request."""
+
+    __tablename__ = "data_source_requests"
+    __table_args__ = (
+        Index("ix_data_source_requests_source_started", "source", "started_at"),
+        Index("ix_data_source_requests_success_started", "success", "started_at"),
+        Index("ix_data_source_requests_series_id", "series_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    sync_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(SYNC_RUN_FK, ondelete="SET NULL")
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
+    series_id: Mapped[str | None] = mapped_column(String(128))
+    request_parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    response_hash: Mapped[str | None] = mapped_column(String(64))
+    response_path: Mapped[str | None] = mapped_column(Text)
+    from_cache: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    error_type: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class DataQualityEvent(TimestampMixin, Base):
+    """A detected data or metadata quality issue and its resolution state."""
+
+    __tablename__ = "data_quality_events"
+    __table_args__ = (
+        Index("ix_data_quality_events_indicator_detected", "indicator_id", "detected_at"),
+        Index("ix_data_quality_events_type_severity", "event_type", "severity"),
+        Index("ix_data_quality_events_resolved_at", "resolved_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(SYNC_RUN_FK, ondelete="SET NULL")
+    )
+    indicator_id: Mapped[str | None] = mapped_column(
+        String(128), ForeignKey(INDICATOR_FK, onupdate="CASCADE", ondelete="SET NULL")
+    )
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    severity: Mapped[str] = mapped_column(String(32), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    event_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_notes: Mapped[str | None] = mapped_column(Text)
 
 
 class DerivedFeature(TimestampMixin, Base):

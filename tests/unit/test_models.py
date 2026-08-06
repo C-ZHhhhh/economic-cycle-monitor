@@ -8,7 +8,7 @@ from app.database.base import Base
 from app.database.models import AgentReport, RawObservation
 
 
-def test_metadata_contains_all_stage_one_tables() -> None:
+def test_metadata_contains_stage_one_and_stage_two_tables() -> None:
     assert set(Base.metadata.tables) == {
         "indicator_registry",
         "raw_observations",
@@ -18,6 +18,9 @@ def test_metadata_contains_all_stage_one_tables() -> None:
         "regime_history",
         "agent_runs",
         "agent_reports",
+        "sync_runs",
+        "data_source_requests",
+        "data_quality_events",
     }
 
 

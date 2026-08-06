@@ -38,3 +38,5 @@ temp/
 
 outputs/*
 !outputs/.gitkeep
+data/raw/
+data/cache/
