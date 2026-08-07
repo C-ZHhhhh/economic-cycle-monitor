@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.data_pipeline.bea_service import BeaPipelineService
 from app.data_pipeline.schemas import BeaBackfillOptions
+from app.data_quality.checks import official_source_issue
+from app.data_quality.repository import persist_quality_issues
 from app.data_sources.bea.client import BeaClient
 from app.data_sources.official.storage import OfficialFileCache, OfficialRawStore
-from app.database.models import ObservationVintage, RawObservation
+from app.database.models import DataQualityEvent, ObservationVintage, RawObservation
 from app.indicators.config import load_indicator_catalog
 from app.indicators.service import seed_indicator_catalog
 from app.settings import Settings
@@ -190,18 +192,18 @@ async def test_t20804_request_is_shared_but_candidates_validate_independently(
                     line="1",
                     description="Personal consumption expenditures (PCE)",
                     value="123.4",
-                    cl_unit="Index numbers, 2017=100",
-                    metric="Chain-type price index, 2017=100",
+                    cl_unit="Level",
+                    metric="Fisher Price Index",
                     multiplier="0",
                 ),
                 _row(
                     table="T20804",
                     series="DPCCRG",
-                    line="6",
+                    line="25",
                     description="PCE excluding food and energy",
                     value="122.8",
-                    cl_unit="Index numbers, 2017=100",
-                    metric="Chain-type price index, 2017=100",
+                    cl_unit="Level",
+                    metric="Fisher Price Index",
                     multiplier="0",
                 ),
             ]
@@ -219,10 +221,60 @@ async def test_t20804_request_is_shared_but_candidates_validate_independently(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_bea_discovery_and_exact_get_data_leave_candidate_pending(
+async def test_backfill_omits_years_before_official_table_availability(
     postgres_session: Session, settings: Settings, tmp_path: Path
 ) -> None:
     seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    requested_years: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_years.append(request.url.params["Year"])
+        return _response(
+            [
+                _row(
+                    table="T20806",
+                    series="DPCERX",
+                    line="1",
+                    description="Personal consumption expenditures",
+                    period="2007M01",
+                    value="10,000,000",
+                    cl_unit="Level",
+                    metric="Chained Dollars",
+                    multiplier="6",
+                )
+            ]
+        )
+
+    async with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        summary = await BeaPipelineService(postgres_session, settings, client).backfill(
+            BeaBackfillOptions(indicator_id="US_REAL_PCE", start_year=2000, end_year=2009)
+        )
+
+    assert requested_years == ["2007,2008,2009"]
+    assert summary.success_count == 1
+    assert summary.failure_count == 0
+    assert summary.inserted_count == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_bea_discovery_and_exact_get_data_retains_reviewed_status(
+    postgres_session: Session, settings: Settings, tmp_path: Path
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    persist_quality_issues(
+        postgres_session,
+        [
+            official_source_issue(
+                "US_REAL_GDP",
+                event_type="invalid_unit_multiplier",
+                severity="error",
+                source="bea",
+                message="Superseded validation finding",
+            )
+        ],
+        run_id=None,
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         method = request.url.params["Method"]
@@ -288,8 +340,16 @@ async def test_bea_discovery_and_exact_get_data_leave_candidate_pending(
     assert summary.success_count == 1
     assert summary.failure_count == 0
     assert summary.request_count == 6
-    assert summary.results[0]["status"] == "pending_review"
+    assert summary.results[0]["status"] == "valid_with_warning"
     assert summary.results[0]["identity_confirmed"] is True
+    superseded = postgres_session.scalar(
+        select(DataQualityEvent).where(
+            DataQualityEvent.indicator_id == "US_REAL_GDP",
+            DataQualityEvent.event_type == "invalid_unit_multiplier",
+        )
+    )
+    assert superseded is not None
+    assert superseded.resolved_at is not None
 
 
 @pytest.mark.integration

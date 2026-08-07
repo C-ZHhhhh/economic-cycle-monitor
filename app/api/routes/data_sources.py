@@ -120,7 +120,7 @@ def bls_status(request: Request, session: SessionDependency) -> dict[str, Any]:
 
 @router.get("/bea/status")
 def bea_status(request: Request, session: SessionDependency) -> dict[str, Any]:
-    """Report BEA configuration, pending candidates, and secret-free activity."""
+    """Report BEA configuration, reviewed mappings, and secret-free activity."""
     latest_success = session.scalar(
         select(DataSourceRequest)
         .where(DataSourceRequest.source == "bea", DataSourceRequest.success.is_(True))
@@ -153,6 +153,18 @@ def bea_status(request: Request, session: SessionDependency) -> dict[str, Any]:
         )
         or 0
     )
+    usable = (
+        session.scalar(
+            select(func.count())
+            .select_from(IndicatorSourceMapping)
+            .where(
+                IndicatorSourceMapping.source == "bea",
+                IndicatorSourceMapping.enabled.is_(True),
+                IndicatorSourceMapping.mapping_status.in_({"valid", "valid_with_warning"}),
+            )
+        )
+        or 0
+    )
     settings = request.app.state.settings
     return {
         "enabled": settings.bea_enabled,
@@ -164,6 +176,7 @@ def bea_status(request: Request, session: SessionDependency) -> dict[str, Any]:
             "ttl_seconds": settings.bea_cache_ttl_seconds,
         },
         "registered_mapping_count": mappings,
+        "usable_mapping_count": usable,
         "pending_review_count": pending,
         "latest_success": _request_summary(latest_success),
         "latest_failure": _request_summary(latest_failure),

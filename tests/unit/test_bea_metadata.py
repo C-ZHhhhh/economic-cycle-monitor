@@ -22,19 +22,29 @@ def _gdp_row(**changes: str) -> BeaNipaDataRow:
         "TimePeriod": "2025Q1",
         "METRIC_NAME": "Chained Dollars",
         "CL_UNIT": "Billions of Chained 2017 Dollars",
-        "UNIT_MULT": "9",
-        "DataValue": "23,548.210",
+        "UNIT_MULT": "6",
+        "DataValue": "23,548,210",
     }
     values.update(changes)
     return BeaNipaDataRow.model_validate(values)
 
 
-def test_exact_identity_stays_pending_until_cross_source_review() -> None:
+def test_exact_reviewed_identity_retains_reviewed_status() -> None:
     result = validate_bea_metadata(_definition(), [_gdp_row()])
     assert result.identity_confirmed is True
-    assert result.status == "pending_review"
+    assert result.status == "valid_with_warning"
     assert result.errors == []
-    assert "remains pending" in result.warnings[0]
+    assert not any("remains pending" in item for item in result.warnings)
+
+
+def test_pending_identity_is_not_automatically_promoted() -> None:
+    definition = _definition().model_copy(update={"mapping_status": "pending_review"})
+
+    result = validate_bea_metadata(definition, [_gdp_row()])
+
+    assert result.identity_confirmed is True
+    assert result.status == "pending_review"
+    assert any("remains pending" in item for item in result.warnings)
 
 
 def test_correct_series_with_wrong_line_stops_candidate() -> None:
@@ -55,7 +65,7 @@ def test_correct_line_with_wrong_series_stops_candidate() -> None:
 def test_non_candidate_multiplier_is_warning_when_normalizable() -> None:
     result = validate_bea_metadata(
         _definition(),
-        [_gdp_row(UNIT_MULT="6", DataValue="23,548,210")],
+        [_gdp_row(UNIT_MULT="9", DataValue="23,548.210")],
     )
     assert result.identity_confirmed is True
     assert any("mathematically normalizable" in item for item in result.warnings)
@@ -77,7 +87,7 @@ def test_live_shape_chained_dollars_level_is_normalizable_with_reference_warning
     assert result.identity_confirmed is True
     assert result.errors == []
     assert any("reference year" in item for item in result.warnings)
-    assert any("mathematically normalizable" in item for item in result.warnings)
+    assert not any("mathematically normalizable" in item for item in result.warnings)
 
 
 def test_frequency_and_economic_meaning_are_required() -> None:
@@ -99,7 +109,7 @@ def test_t20804_headline_and_core_validate_independently() -> None:
             "LineDescription": "Personal consumption expenditures (PCE)",
             "TimePeriod": "2025M01",
             "METRIC_NAME": "Fisher Price Index",
-            "CL_UNIT": "Index 2017=100",
+            "CL_UNIT": "Level",
             "UNIT_MULT": "0",
             "DataValue": "125.100",
         }
@@ -107,7 +117,7 @@ def test_t20804_headline_and_core_validate_independently() -> None:
     core = headline.model_copy(
         update={
             "SeriesCode": "DPCCRG",
-            "LineNumber": "6",
+            "LineNumber": "25",
             "LineDescription": "PCE excluding food and energy",
             "DataValue": "124.900",
         }
@@ -115,3 +125,68 @@ def test_t20804_headline_and_core_validate_independently() -> None:
     rows = [headline, core]
     assert validate_bea_metadata(_definition("US_PCE_PRICE"), rows).identity_confirmed
     assert validate_bea_metadata(_definition("US_CORE_PCE_PRICE"), rows).identity_confirmed
+
+
+def test_core_pce_old_candidate_line_six_is_rejected() -> None:
+    row = BeaNipaDataRow.model_validate(
+        {
+            "TableName": "T20804",
+            "SeriesCode": "DPCCRG",
+            "LineNumber": "6",
+            "LineDescription": "PCE excluding food and energy",
+            "TimePeriod": "2025M01",
+            "METRIC_NAME": "Fisher Price Index",
+            "CL_UNIT": "Level",
+            "UNIT_MULT": "0",
+            "DataValue": "124.900",
+        }
+    )
+
+    result = validate_bea_metadata(_definition("US_CORE_PCE_PRICE"), [row])
+
+    assert result.identity_confirmed is False
+    assert result.errors == ["LineNumber mismatch: expected 25, returned ['6'] for DPCCRG"]
+
+
+def test_fisher_price_index_level_zero_without_reference_year_is_valid() -> None:
+    row = BeaNipaDataRow.model_validate(
+        {
+            "TableName": "T20804",
+            "SeriesCode": "DPCCRG",
+            "LineNumber": "25",
+            "LineDescription": "PCE excluding food and energy",
+            "TimePeriod": "2025M01",
+            "METRIC_NAME": "Fisher Price Index",
+            "CL_UNIT": "Level",
+            "UNIT_MULT": "0",
+            "DataValue": "124.900",
+        }
+    )
+
+    result = validate_bea_metadata(_definition("US_CORE_PCE_PRICE"), [row])
+
+    assert result.identity_confirmed is True
+    assert result.errors == []
+    assert not any("reference year" in item for item in result.warnings)
+
+
+def test_non_price_index_metric_and_wrong_multiplier_are_rejected() -> None:
+    row = BeaNipaDataRow.model_validate(
+        {
+            "TableName": "T20804",
+            "SeriesCode": "DPCCRG",
+            "LineNumber": "25",
+            "LineDescription": "PCE excluding food and energy",
+            "TimePeriod": "2025M01",
+            "METRIC_NAME": "Chained Dollars",
+            "CL_UNIT": "Level",
+            "UNIT_MULT": "6",
+            "DataValue": "124,900,000",
+        }
+    )
+
+    result = validate_bea_metadata(_definition("US_CORE_PCE_PRICE"), [row])
+
+    assert result.identity_confirmed is False
+    assert any("Metric_Name" in item for item in result.errors)
+    assert any("price-index UNIT_MULT mismatch" in item for item in result.errors)

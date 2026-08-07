@@ -1,4 +1,4 @@
-schema_version: "0.4.0"
+schema_version: "0.4.1"
 source: bea
 mappings:
   - indicator_id: US_REAL_GDP
@@ -6,7 +6,7 @@ mappings:
     source: bea
     source_series_id: A191RX
     source_dataset: NIPA
-    source_parameters: {table_name: T10106, line_number: "1", account_code: A191RX, frequency: Q, expected_unit_multiplier: 9, target_unit_multiplier: 9, unit_kind: chained_dollars, description_keyword_groups: [[gross], [domestic], [product]]}
+    source_parameters: {table_name: T10106, line_number: "1", account_code: A191RX, frequency: Q, first_available_year: 1947, expected_unit_multiplier: 6, target_unit_multiplier: 9, unit_kind: chained_dollars, description_keyword_groups: [[gross], [domestic], [product]]}
     official_name: Real Gross Domestic Product
     source_unit: billions_chained_2017_dollars
     expected_unit: chained_dollars
@@ -19,17 +19,17 @@ mappings:
     comparison_tolerance: 0.001
     distribution_lag_days: 3
     revision_lookback_years: 5
-    mapping_status: pending_review
+    mapping_status: valid_with_warning
     enabled: true
-    mapping_version: "0.4.0"
+    mapping_version: "0.4.1"
     validation_url: https://apps.bea.gov/iTable/?ReqID=19&step=3&isuri=1&nipa_table_list=6
-    notes: Candidate Table 1.1.6 line 1; exact BEA GetData identity remains required.
+    notes: Live BEA GetData confirmed Table 1.1.6 line 1; row unit text omits the reference year, and 106/106 observations matched FRED exactly.
   - indicator_id: US_REAL_PCE
     fred_series_id: PCEC96
     source: bea
     source_series_id: DPCERX
     source_dataset: NIPA
-    source_parameters: {table_name: T20806, line_number: "1", account_code: DPCERX, frequency: M, expected_unit_multiplier: 9, target_unit_multiplier: 9, unit_kind: chained_dollars, description_keyword_groups: [[personal], [consumption], [expenditures]]}
+    source_parameters: {table_name: T20806, line_number: "1", account_code: DPCERX, frequency: M, first_available_year: 2007, expected_unit_multiplier: 6, target_unit_multiplier: 9, unit_kind: chained_dollars, description_keyword_groups: [[personal], [consumption], [expenditures]]}
     official_name: Real Personal Consumption Expenditures
     source_unit: billions_chained_2017_dollars
     expected_unit: chained_dollars
@@ -42,17 +42,17 @@ mappings:
     comparison_tolerance: 0.1
     distribution_lag_days: 3
     revision_lookback_years: 5
-    mapping_status: pending_review
+    mapping_status: valid_with_warning
     enabled: true
-    mapping_version: "0.4.0"
+    mapping_version: "0.4.1"
     validation_url: https://apps.bea.gov/iTable/?ReqID=19&step=3&isuri=1&nipa_table_list=83
-    notes: Candidate monthly Table 2.8.6 line 1; exact BEA GetData identity remains required.
+    notes: Live BEA GetData confirmed monthly Table 2.8.6 line 1 from 2007; row unit text omits the reference year, and all 234 observations matched FRED exactly or within source rounding.
   - indicator_id: US_REAL_DISPOSABLE_INCOME
     fred_series_id: DSPIC96
     source: bea
     source_series_id: A067RX
     source_dataset: NIPA
-    source_parameters: {table_name: T20600, line_number: "37", account_code: A067RX, frequency: M, expected_unit_multiplier: 9, target_unit_multiplier: 9, unit_kind: chained_dollars, description_keyword_groups: [[disposable, total], [personal, billions], [income, dollars]]}
+    source_parameters: {table_name: T20600, line_number: "37", account_code: A067RX, frequency: M, first_available_year: 1959, expected_unit_multiplier: 6, target_unit_multiplier: 9, unit_kind: chained_dollars, description_keyword_groups: [[disposable, total], [personal, billions], [income, dollars]]}
     official_name: Real Disposable Personal Income
     source_unit: billions_chained_2017_dollars
     expected_unit: chained_dollars
@@ -65,17 +65,17 @@ mappings:
     comparison_tolerance: 0.1
     distribution_lag_days: 3
     revision_lookback_years: 5
-    mapping_status: pending_review
+    mapping_status: valid_with_warning
     enabled: true
-    mapping_version: "0.4.0"
+    mapping_version: "0.4.1"
     validation_url: https://apps.bea.gov/iTable/?ReqID=19&step=3&isuri=1&nipa_table_list=76
-    notes: Candidate Table 2.6 line 37; parent-heading semantics and exact identity remain required.
+    notes: Live BEA GetData confirmed Table 2.6 line 37; row unit text omits the reference year, and all 318 observations matched FRED exactly or within source rounding.
   - indicator_id: US_PCE_PRICE
     fred_series_id: PCEPI
     source: bea
     source_series_id: DPCERG
     source_dataset: NIPA
-    source_parameters: {table_name: T20804, line_number: "1", account_code: DPCERG, frequency: M, expected_unit_multiplier: 0, target_unit_multiplier: 0, unit_kind: index, description_keyword_groups: [[personal], [consumption], [expenditures]]}
+    source_parameters: {table_name: T20804, line_number: "1", account_code: DPCERG, frequency: M, first_available_year: 1959, expected_unit_multiplier: 0, target_unit_multiplier: 0, unit_kind: index, metric_name_keyword_groups: [[fisher], [price], [index]], allowed_cl_unit_tokens: [level], reference_year: 2017, reference_year_basis: trusted_table_series_metadata, description_keyword_groups: [[personal], [consumption], [expenditures]]}
     official_name: Personal Consumption Expenditures Price Index
     source_unit: index_2017_100
     expected_unit: index
@@ -88,17 +88,17 @@ mappings:
     comparison_tolerance: 0.001
     distribution_lag_days: 3
     revision_lookback_years: 5
-    mapping_status: pending_review
+    mapping_status: valid
     enabled: true
-    mapping_version: "0.4.0"
+    mapping_version: "0.4.1"
     validation_url: https://apps.bea.gov/iTable/?ReqID=19&step=3&isuri=1&nipa_table_list=81
-    notes: Candidate Table 2.8.4 line 1; exact BEA GetData identity remains required.
+    notes: Live BEA GetData and 318/318 exact FRED comparisons confirmed Table 2.8.4 line 1.
   - indicator_id: US_CORE_PCE_PRICE
     fred_series_id: PCEPILFE
     source: bea
     source_series_id: DPCCRG
     source_dataset: NIPA
-    source_parameters: {table_name: T20804, line_number: "6", account_code: DPCCRG, frequency: M, expected_unit_multiplier: 0, target_unit_multiplier: 0, unit_kind: index, description_keyword_groups: [[pce, personal], [excluding], [food], [energy]]}
+    source_parameters: {table_name: T20804, line_number: "25", account_code: DPCCRG, frequency: M, first_available_year: 1959, expected_unit_multiplier: 0, target_unit_multiplier: 0, unit_kind: index, metric_name_keyword_groups: [[fisher], [price], [index]], allowed_cl_unit_tokens: [level], reference_year: 2017, reference_year_basis: trusted_table_series_metadata, description_keyword_groups: [[pce, personal], [excluding], [food], [energy]]}
     official_name: PCE Price Index Excluding Food and Energy
     source_unit: index_2017_100
     expected_unit: index
@@ -111,8 +111,8 @@ mappings:
     comparison_tolerance: 0.001
     distribution_lag_days: 3
     revision_lookback_years: 5
-    mapping_status: pending_review
+    mapping_status: valid
     enabled: true
-    mapping_version: "0.4.0"
+    mapping_version: "0.4.1"
     validation_url: https://apps.bea.gov/iTable/?ReqID=19&step=3&isuri=1&nipa_table_list=81
-    notes: Candidate Table 2.8.4 line 6; validated independently from headline PCE.
+    notes: Live BEA GetData and 318/318 exact FRED comparisons confirmed Table 2.8.4 line 25 as PCE excluding food and energy.

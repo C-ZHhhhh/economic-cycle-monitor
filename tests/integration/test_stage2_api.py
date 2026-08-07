@@ -79,7 +79,10 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         bls_status = client.get("/api/v1/data-sources/bls/status")
         bea_status = client.get("/api/v1/data-sources/bea/status")
         mappings = client.get("/api/v1/source-mappings", params={"source": "bls", "limit": 5})
-        bea_mappings = client.get("/api/v1/source-mappings", params={"source": "BEA", "limit": 5})
+        bea_mappings = client.get(
+            "/api/v1/source-mappings",
+            params={"source": "BEA", "enabled": True, "limit": 5},
+        )
         mapping = client.get("/api/v1/source-mappings/US_CPI")
 
     assert indicators.status_code == 200
@@ -96,12 +99,16 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert "offline-bls-test-credential" not in bls_status.text
     assert bea_status.status_code == 200
     assert bea_status.json()["api_key_configured"] is True
-    assert bea_status.json()["pending_review_count"] == 5
+    assert bea_status.json()["pending_review_count"] == 0
+    assert bea_status.json()["usable_mapping_count"] == 5
     assert "offline-bea-test-credential" not in bea_status.text
     assert mappings.status_code == 200
     assert len(mappings.json()) == 5
     assert bea_mappings.status_code == 200
     assert len(bea_mappings.json()) == 5
-    assert {item["mapping_status"] for item in bea_mappings.json()} == {"pending_review"}
+    assert {item["mapping_status"] for item in bea_mappings.json()} == {
+        "valid",
+        "valid_with_warning",
+    }
     assert mapping.status_code == 200
     assert mapping.json()[0]["source_series_id"] == "CUSR0000SA0"

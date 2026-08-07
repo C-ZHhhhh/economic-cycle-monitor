@@ -148,20 +148,20 @@ async def test_get_data_uses_one_table_explicit_years_and_parses_rows(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_http_200_business_error_is_failed_and_not_archived(tmp_path: Path) -> None:
+@pytest.mark.parametrize("error_location", ["Results", "BEAAPI"])
+async def test_http_200_business_error_is_failed_and_not_archived(
+    tmp_path: Path, error_location: str
+) -> None:
+    error = {
+        "APIErrorCode": "4",
+        "APIErrorDescription": f"Invalid UserID {TEST_KEY}",
+    }
+
     def handler(request: httpx.Request) -> httpx.Response:
+        api = {"Results": {"Error": error}} if error_location == "Results" else {"Error": error}
         return httpx.Response(
             200,
-            json={
-                "BEAAPI": {
-                    "Results": {
-                        "Error": {
-                            "APIErrorCode": "4",
-                            "APIErrorDescription": f"Invalid UserID {TEST_KEY}",
-                        }
-                    }
-                }
-            },
+            json={"BEAAPI": api},
         )
 
     async with _client(tmp_path, httpx.MockTransport(handler)) as client:

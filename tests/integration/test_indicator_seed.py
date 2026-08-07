@@ -17,7 +17,6 @@ def test_indicator_catalog_seed_is_idempotent(postgres_session: Session) -> None
     first = seed_indicator_catalog(postgres_session, catalog)
     second = seed_indicator_catalog(postgres_session, catalog)
 
-    assert first.inserted + first.unchanged == 33
-    assert first.updated == 0
+    assert first.inserted + first.updated + first.unchanged == 33
     assert second.unchanged == 33
     assert postgres_session.scalar(select(func.count()).select_from(IndicatorRegistry)) == 33

@@ -315,6 +315,11 @@ class BeaClient:
         api = body.get("BEAAPI")
         if not isinstance(api, dict):
             return None
+        root_error = api.get("Error")
+        if isinstance(root_error, list) and root_error and isinstance(root_error[0], dict):
+            return root_error[0]
+        if isinstance(root_error, dict):
+            return root_error
         results = api.get("Results")
         candidates = results if isinstance(results, list) else [results]
         for candidate in candidates:

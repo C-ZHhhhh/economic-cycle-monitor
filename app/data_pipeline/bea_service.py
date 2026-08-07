@@ -24,8 +24,12 @@ from app.data_pipeline.schemas import (
     PipelineSelection,
     SyncSummary,
 )
-from app.data_quality.checks import check_official_observation_batch, official_source_issue
-from app.data_quality.repository import persist_quality_issues
+from app.data_quality.checks import (
+    QualityIssue,
+    check_official_observation_batch,
+    official_source_issue,
+)
+from app.data_quality.repository import persist_quality_issues, reconcile_quality_issues
 from app.data_sources.bea.adapter import BeaAdapter
 from app.data_sources.bea.client import BeaClient
 from app.data_sources.bea.exceptions import BeaBusinessError, BeaError
@@ -199,11 +203,11 @@ class BeaPipelineService:
                 validation = validate_bea_metadata(candidate, rows)
                 self._apply_validation(mapping, validation)
                 summary.results.append(self._validation_result(candidate, validation))
+                summary.quality_event_count += self._reconcile_validation_issues(
+                    run.run_id, indicator.indicator_id, validation
+                )
                 if validation.errors:
                     summary.failure_count += 1
-                    summary.quality_event_count += self._persist_validation_issues(
-                        run.run_id, indicator.indicator_id, validation
-                    )
                 else:
                     summary.success_count += 1
         self._finish_status(summary)
@@ -318,19 +322,39 @@ class BeaPipelineService:
             table_name = str(definition.source_parameters["table_name"])
             frequency = str(definition.source_parameters["frequency"])
             for years in batches:
+                active_group = [
+                    item
+                    for item in group
+                    if any(
+                        year >= int(item[2].source_parameters.get("first_available_year", 1929))
+                        for year in years
+                    )
+                ]
+                if not active_group:
+                    continue
+                first_available_year = min(
+                    int(item[2].source_parameters.get("first_available_year", 1929))
+                    for item in active_group
+                )
+                request_years = [year for year in years if year >= first_available_year]
                 try:
                     rows, notes, payload = await self.client.get_nipa_data(
-                        table_name=table_name, frequency=frequency, years=years
+                        table_name=table_name, frequency=frequency, years=request_years
                     )
                     self._record_payload(summary, run_id, payload)
                 except Exception as error:
-                    self._record_data_failure(run_id, table_name, frequency, years, error)
+                    self._record_data_failure(run_id, table_name, frequency, request_years, error)
                     self._fail_group(
-                        summary, group, error, run_id, count_failures=False, years=years
+                        summary,
+                        active_group,
+                        error,
+                        run_id,
+                        count_failures=False,
+                        years=request_years,
                     )
-                    failures.update(indicator.indicator_id for indicator, _, _ in group)
+                    failures.update(indicator.indicator_id for indicator, _, _ in active_group)
                     continue
-                for indicator, mapping, candidate in group:
+                for indicator, mapping, candidate in active_group:
                     validation = validate_bea_metadata(candidate, rows)
                     self._apply_validation(mapping, validation)
                     if validation.errors:
@@ -388,16 +412,47 @@ class BeaPipelineService:
                                     severity="info",
                                     source="bea",
                                     message="BEA changed a previously stored same-source value",
-                                    details={"revision_count": write.revised, "years": years},
+                                    details={
+                                        "revision_count": write.revised,
+                                        "years": request_years,
+                                    },
                                 )
                             ],
                             run_id=run_id,
                         )
 
+    def _reconcile_validation_issues(
+        self, run_id: UUID, indicator_id: str, validation: BeaMetadataValidation
+    ) -> int:
+        issues = self._validation_issues(indicator_id, validation)
+        inserted, _resolved = reconcile_quality_issues(
+            self.session,
+            issues,
+            run_id=run_id,
+            indicator_id=indicator_id,
+            event_types=(
+                "source_metadata_mismatch",
+                "unexpected_table_line",
+                "unexpected_series_code",
+                "invalid_unit_multiplier",
+            ),
+        )
+        return inserted
+
     def _persist_validation_issues(
         self, run_id: UUID, indicator_id: str, validation: BeaMetadataValidation
     ) -> int:
-        issues = []
+        return persist_quality_issues(
+            self.session,
+            self._validation_issues(indicator_id, validation),
+            run_id=run_id,
+        )
+
+    @staticmethod
+    def _validation_issues(
+        indicator_id: str, validation: BeaMetadataValidation
+    ) -> list[QualityIssue]:
+        issues: list[QualityIssue] = []
         for message in validation.errors:
             event_type = "source_metadata_mismatch"
             if message.startswith("LineNumber") or message.startswith("TableName"):
@@ -415,7 +470,7 @@ class BeaPipelineService:
                     message=message,
                 )
             )
-        return persist_quality_issues(self.session, issues, run_id=run_id)
+        return issues
 
     def _record_payload(self, summary: SyncSummary, run_id: UUID, payload: BeaPayload) -> None:
         record_successful_bea_request(self.session, run_id, payload)
@@ -521,7 +576,7 @@ class BeaPipelineService:
     def _apply_validation(
         mapping: IndicatorSourceMapping, validation: BeaMetadataValidation
     ) -> None:
-        mapping.mapping_status = "pending_review"
+        mapping.mapping_status = validation.status
         mapping.mapping_warnings_json = [*validation.errors, *validation.warnings]
         mapping.metadata_checked_at = datetime.now(UTC)
 

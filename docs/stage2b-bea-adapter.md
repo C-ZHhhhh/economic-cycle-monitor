@@ -3,26 +3,39 @@
 Stage 2B-2 adds only the BEA NIPA adapter. It does not add Census, Federal Reserve,
 DOL, scoring, feature calculation, scheduling, Stage 3 logic, or live LLM calls.
 
-## Candidate gate
+## Mapping gate
 
-The five mappings in `config/data_sources/bea.yaml` are candidates and remain
-`pending_review` until an explicitly authorized live GetData run and BEA/FRED comparison
-are reviewed. A configured candidate never bypasses validation. Every response must match
+The five mappings in `config/data_sources/bea.yaml` began as `pending_review` candidates.
+An explicitly authorized live GetData run and full BEA/FRED comparison confirmed all five;
+the two price-index mappings are `valid`, while the three chained-dollar mappings are
+`valid_with_warning` because row-level unit text omits the trusted table reference year.
+A configured mapping never bypasses validation. Every response must match
 the exact dataset, TableName, SeriesCode, LineNumber, frequency, unit semantics, and
 economic meaning before any row can be written. A mismatch stops only that indicator and
 is never used to substitute another line or series automatically.
 
-| Indicator | TableName | SeriesCode | candidate LineNumber | Frequency |
-| --- | --- | --- | --- | --- |
-| US_REAL_GDP | T10106 | A191RX | 1 | Q |
-| US_REAL_PCE | T20806 | DPCERX | 1 | M |
-| US_REAL_DISPOSABLE_INCOME | T20600 | A067RX | 37 | M |
-| US_PCE_PRICE | T20804 | DPCERG | 1 | M |
-| US_CORE_PCE_PRICE | T20804 | DPCCRG | 6 | M |
+| Indicator | TableName | SeriesCode | LineNumber | Frequency | Reviewed status |
+| --- | --- | --- | --- | --- | --- |
+| US_REAL_GDP | T10106 | A191RX | 1 | Q | valid_with_warning |
+| US_REAL_PCE | T20806 | DPCERX | 1 | M | valid_with_warning |
+| US_REAL_DISPOSABLE_INCOME | T20600 | A067RX | 37 | M | valid_with_warning |
+| US_PCE_PRICE | T20804 | DPCERG | 1 | M | valid |
+| US_CORE_PCE_PRICE | T20804 | DPCCRG | 25 | M | valid |
 
 T20804 is fetched once per year batch. Its headline and core rows are validated and
 persisted independently. No ingestion code interpolates, repeats, downsamples, or otherwise
 changes source frequency.
+
+The live BEA GetData response confirmed DPCCRG on line 25 with the description
+`PCE excluding food and energy`. For T20804 price-index rows, BEA's normal shape is
+`Metric_Name=Fisher Price Index`, `CL_UNIT=Level`, and `UNIT_MULT=0`. The 2017=100
+reference basis is trusted only after the exact table, series, and line identity gate;
+row-level unit text is not required to repeat the reference year.
+
+Official NIPA parameter metadata supplies each table's first available year. Requests
+starting before that bound omit unavailable years instead of inventing observations or
+turning a normal source-coverage boundary into a failed indicator. In particular,
+T20806 monthly data begins in 2007.
 
 ## Data and audit behavior
 

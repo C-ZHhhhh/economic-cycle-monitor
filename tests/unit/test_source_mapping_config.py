@@ -35,12 +35,19 @@ def test_bls_scope_excludes_dol_and_future_official_sources() -> None:
     assert {item.source for item in load_source_mapping_catalog().mappings} == {"bls"}
 
 
-def test_bea_catalog_contains_only_five_pending_review_candidates() -> None:
+def test_bea_catalog_contains_only_five_live_reviewed_mappings() -> None:
     catalog = load_source_mapping_catalog_for("bea")
 
     assert catalog.source == "bea"
     assert len(catalog.mappings) == 5
-    assert all(item.mapping_status == "pending_review" for item in catalog.mappings)
+    statuses = {item.indicator_id: item.mapping_status for item in catalog.mappings}
+    assert statuses == {
+        "US_REAL_GDP": "valid_with_warning",
+        "US_REAL_PCE": "valid_with_warning",
+        "US_REAL_DISPOSABLE_INCOME": "valid_with_warning",
+        "US_PCE_PRICE": "valid",
+        "US_CORE_PCE_PRICE": "valid",
+    }
     assert all(item.enabled for item in catalog.mappings)
     assert {item.source_parameters["table_name"] for item in catalog.mappings} == {
         "T10106",
@@ -49,3 +56,10 @@ def test_bea_catalog_contains_only_five_pending_review_candidates() -> None:
         "T20804",
     }
     assert sum(item.source_parameters["table_name"] == "T20804" for item in catalog.mappings) == 2
+    assert all(item.mapping_version == "0.4.1" for item in catalog.mappings)
+    assert (
+        next(
+            item for item in catalog.mappings if item.indicator_id == "US_CORE_PCE_PRICE"
+        ).source_parameters["line_number"]
+        == "25"
+    )

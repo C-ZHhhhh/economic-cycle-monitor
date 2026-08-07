@@ -477,7 +477,7 @@ def validate_bea_mappings_command(
     dry_run: bool = typer.Option(False),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Validate pending BEA candidates without promoting their review status."""
+    """Validate exact BEA mappings without auto-promoting pending candidates."""
     settings = _load_settings()
     _require_bea_enabled(settings)
     summary = _execute_async_pipeline(

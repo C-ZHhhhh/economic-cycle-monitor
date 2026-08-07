@@ -7,7 +7,7 @@ from typing import Any
 
 from app.data_sources.bea.adapter import BeaAdapter
 from app.data_sources.bea.schemas import BeaNipaDataRow
-from app.source_mappings.schemas import SourceMappingDefinition
+from app.source_mappings.schemas import MappingStatus, SourceMappingDefinition
 
 
 def _tokens(value: str) -> set[str]:
@@ -25,15 +25,22 @@ def _line_key(value: str) -> Decimal | None:
 class BeaMetadataValidation:
     """Candidate validation evidence without automatically promoting mapping status."""
 
+    configured_status: MappingStatus = "pending_review"
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     returned_series_codes: list[str] = field(default_factory=list)
     returned_line_numbers: list[str] = field(default_factory=list)
 
     @property
-    def status(self) -> str:
-        """Remain pending until a separately authorized live comparison is reviewed."""
-        return "pending_review"
+    def status(self) -> MappingStatus:
+        """Return the reviewed status without auto-promoting pending mappings."""
+        if self.errors or self.configured_status == "pending_review":
+            return "pending_review"
+        if self.configured_status in {"invalid", "unavailable"}:
+            return self.configured_status
+        if self.warnings or self.configured_status == "valid_with_warning":
+            return "valid_with_warning"
+        return "valid"
 
     @property
     def identity_confirmed(self) -> bool:
@@ -45,7 +52,7 @@ def validate_bea_metadata(
     definition: SourceMappingDefinition, rows: list[BeaNipaDataRow]
 ) -> BeaMetadataValidation:
     """Validate exact identity plus unit and economic semantics from live table rows."""
-    result = BeaMetadataValidation()
+    result = BeaMetadataValidation(configured_status=definition.mapping_status)
     parameters: dict[str, Any] = definition.source_parameters
     table_name = str(parameters.get("table_name", ""))
     line_number = str(parameters.get("line_number", ""))
@@ -121,8 +128,26 @@ def validate_bea_metadata(
             )
             if message not in result.warnings:
                 result.warnings.append(message)
-        if expected_kind == "index" and not {"index", "2017"}.issubset(_tokens(text)):
-            result.errors.append("BEA unit metadata is not an index with reference year 2017")
+        if expected_kind == "index":
+            metric_tokens = _tokens(row.METRIC_NAME)
+            for raw_group in parameters.get("metric_name_keyword_groups", []):
+                group = {str(item).lower() for item in raw_group}
+                if group and not metric_tokens.intersection(group):
+                    message = f"BEA Metric_Name lacks required price-index concept {sorted(group)}"
+                    if message not in result.errors:
+                        result.errors.append(message)
+            allowed_cl_unit_tokens = {
+                str(item).lower() for item in parameters.get("allowed_cl_unit_tokens", [])
+            }
+            if allowed_cl_unit_tokens and not _tokens(row.CL_UNIT).intersection(
+                allowed_cl_unit_tokens
+            ):
+                message = (
+                    "BEA CL_UNIT is incompatible with the configured price-index unit: "
+                    f"returned {row.CL_UNIT!r}"
+                )
+                if message not in result.errors:
+                    result.errors.append(message)
         try:
             multiplier = int(row.UNIT_MULT)
             multipliers.add(multiplier)
@@ -135,6 +160,15 @@ def validate_bea_metadata(
             result.errors.append("BEA DataValue/UNIT_MULT cannot be normalized")
     if len(multipliers) > 1:
         result.errors.append(f"BEA returned inconsistent UNIT_MULT values {sorted(multipliers)}")
+    elif (
+        expected_kind == "index"
+        and candidate_multiplier is not None
+        and multipliers != {int(candidate_multiplier)}
+    ):
+        result.errors.append(
+            "BEA price-index UNIT_MULT mismatch: "
+            f"returned {sorted(multipliers)}, expected {candidate_multiplier}"
+        )
     elif candidate_multiplier is not None and multipliers != {int(candidate_multiplier)}:
         result.warnings.append(
             "BEA UNIT_MULT differs from the candidate but is mathematically normalizable: "
@@ -151,7 +185,7 @@ def validate_bea_metadata(
         result.errors.append(
             f"{period_errors} BEA periods do not match configured frequency {frequency}"
         )
-    if not result.errors:
+    if not result.errors and definition.mapping_status == "pending_review":
         result.warnings.append(
             "Exact BEA identity passed; mapping remains pending until BEA/FRED comparison review"
         )
