@@ -79,6 +79,10 @@ def test_every_stage_two_command_has_help() -> None:
         "compare-sources",
         "show-source-status",
         "clear-bls-cache",
+        "validate-bea-mappings",
+        "backfill-bea",
+        "sync-bea",
+        "clear-bea-cache",
     ]
 
     for command in commands:

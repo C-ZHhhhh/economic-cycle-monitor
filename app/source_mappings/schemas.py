@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -19,6 +19,7 @@ class SourceMappingDefinition(BaseModel):
     source: str
     source_series_id: str
     source_dataset: str
+    source_parameters: dict[str, Any] = Field(default_factory=dict)
     official_name: str
     source_unit: str
     expected_unit: str

@@ -195,6 +195,9 @@ class IndicatorSourceMapping(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     source_series_id: Mapped[str] = mapped_column(String(128), nullable=False)
     source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_parameters_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default="{}", nullable=False
+    )
     source_name: Mapped[str] = mapped_column(String(512), nullable=False)
     source_unit: Mapped[str] = mapped_column(String(128), nullable=False)
     source_frequency: Mapped[str] = mapped_column(String(64), nullable=False)

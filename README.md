@@ -1,11 +1,12 @@
 # Economic Cycle Monitor
 
 一个面向个人研究的全球经济周期多 Agent 监测系统。本仓库当前实现
-**US Macro Cycle Agent 阶段 2B-1：BLS 官方源适配器**。
+**US Macro Cycle Agent 阶段 2B-2：BEA 官方源适配器**。
 
 当前版本在阶段 1 基础上提供 33 项美国宏观指标目录、FRED 元数据验证、历史
 回填、增量修订、按需 ALFRED vintage，以及 14 项 BLS 官方序列的批量回填、同源
-修订和 FRED 交叉验证。BLS 与 FRED 按来源独立保存，不执行评分或调用真实 LLM。
+修订和 FRED 交叉验证，以及 5 项待真实验证的 BEA NIPA 候选映射。BLS、BEA 与
+FRED 按来源独立保存，不执行评分或调用真实 LLM。
 
 ## 环境与安装
 
@@ -28,6 +29,10 @@ alembic upgrade head
 
 BLS 默认关闭。只有手动 Smoke Test 才设置 `BLS_ENABLED=true`；`BLS_API_KEY` 可留空
 使用公共配额。任何 BLS 凭据也只存在于本机 `.env`。
+
+BEA 默认关闭，5 项候选映射均保持 `pending_review`。只有用户明确授权 Live Smoke
+Test 后才设置 `BEA_ENABLED=true` 并使用本机 `BEA_API_KEY`；真实 GetData 与 FRED
+对比完成前不得将候选提升为 `valid`。
 
 首次运行集成测试前创建测试库：
 
@@ -57,6 +62,12 @@ python -m app.cli sync-bls --indicator US_CPI
 python -m app.cli compare-sources --primary bls --secondary fred --indicator US_CPI
 python -m app.cli show-source-status bls
 python -m app.cli clear-bls-cache
+python -m app.cli validate-bea-mappings --indicator US_REAL_GDP
+python -m app.cli backfill-bea --indicator US_REAL_GDP --start-year 2024
+python -m app.cli sync-bea --indicator US_REAL_GDP
+python -m app.cli compare-sources --primary bea --secondary fred --indicator US_REAL_GDP
+python -m app.cli show-source-status bea
+python -m app.cli clear-bea-cache
 ```
 
 首次抓取前依次执行迁移、`seed-indicators` 和 `validate-fred-metadata`。元数据为
@@ -86,6 +97,7 @@ OpenAPI UI 位于 <http://127.0.0.1:8000/docs>。
 | GET | `/api/v1/indicators/{indicator_id}/observations` | 分页查询当前值或 vintage |
 | GET | `/api/v1/data-sources/fred/status` | FRED 脱敏状态 |
 | GET | `/api/v1/data-sources/bls/status` | BLS 脱敏状态 |
+| GET | `/api/v1/data-sources/bea/status` | BEA 脱敏状态与候选审查计数 |
 | GET | `/api/v1/source-mappings[/{indicator_id}]` | 分页查询官方源映射 |
 | GET | `/api/v1/source-comparisons[/{indicator_id}]` | 分页查询交叉验证结果 |
 | GET | `/api/v1/data-quality` | 分页查询质量事件 |
@@ -129,7 +141,7 @@ FRED 是当前数据入口；ALFRED 实时历史能力仅按需使用，阶段 2
 
 ## 当前未实现
 
-- BEA、Census、Federal Reserve、DOL 官方源适配器
+- Census、Federal Reserve、DOL 官方源适配器
 - 特征计算、评分、周期判断和 Nowcast
 - DeepSeek 或其他真实 LLM 请求
 - 自动调度、并行 Agent、综合判断 Agent

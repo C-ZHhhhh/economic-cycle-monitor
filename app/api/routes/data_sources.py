@@ -116,3 +116,55 @@ def bls_status(request: Request, session: SessionDependency) -> dict[str, Any]:
         "latest_success": _request_summary(latest_success),
         "latest_failure": _request_summary(latest_failure),
     }
+
+
+@router.get("/bea/status")
+def bea_status(request: Request, session: SessionDependency) -> dict[str, Any]:
+    """Report BEA configuration, pending candidates, and secret-free activity."""
+    latest_success = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == "bea", DataSourceRequest.success.is_(True))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    latest_failure = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == "bea", DataSourceRequest.success.is_(False))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    mappings = (
+        session.scalar(
+            select(func.count())
+            .select_from(IndicatorSourceMapping)
+            .where(IndicatorSourceMapping.source == "bea", IndicatorSourceMapping.enabled.is_(True))
+        )
+        or 0
+    )
+    pending = (
+        session.scalar(
+            select(func.count())
+            .select_from(IndicatorSourceMapping)
+            .where(
+                IndicatorSourceMapping.source == "bea",
+                IndicatorSourceMapping.enabled.is_(True),
+                IndicatorSourceMapping.mapping_status == "pending_review",
+            )
+        )
+        or 0
+    )
+    settings = request.app.state.settings
+    return {
+        "enabled": settings.bea_enabled,
+        "configured": settings.bea_api_key is not None,
+        "api_key_configured": settings.bea_api_key is not None,
+        "base_url": str(settings.bea_base_url),
+        "cache": {
+            "enabled": settings.bea_cache_enabled,
+            "ttl_seconds": settings.bea_cache_ttl_seconds,
+        },
+        "registered_mapping_count": mappings,
+        "pending_review_count": pending,
+        "latest_success": _request_summary(latest_success),
+        "latest_failure": _request_summary(latest_failure),
+    }

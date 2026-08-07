@@ -1,6 +1,9 @@
 """Reviewed BLS source-mapping configuration tests."""
 
-from app.source_mappings.config import load_source_mapping_catalog
+from app.source_mappings.config import (
+    load_source_mapping_catalog,
+    load_source_mapping_catalog_for,
+)
 
 
 def test_bls_catalog_contains_only_the_14_reviewed_series() -> None:
@@ -30,3 +33,19 @@ def test_bls_scope_excludes_dol_and_future_official_sources() -> None:
     assert "US_INITIAL_CLAIMS" not in indicator_ids
     assert "US_CONTINUING_CLAIMS" not in indicator_ids
     assert {item.source for item in load_source_mapping_catalog().mappings} == {"bls"}
+
+
+def test_bea_catalog_contains_only_five_pending_review_candidates() -> None:
+    catalog = load_source_mapping_catalog_for("bea")
+
+    assert catalog.source == "bea"
+    assert len(catalog.mappings) == 5
+    assert all(item.mapping_status == "pending_review" for item in catalog.mappings)
+    assert all(item.enabled for item in catalog.mappings)
+    assert {item.source_parameters["table_name"] for item in catalog.mappings} == {
+        "T10106",
+        "T20806",
+        "T20600",
+        "T20804",
+    }
+    assert sum(item.source_parameters["table_name"] == "T20804" for item in catalog.mappings) == 2

@@ -9,6 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import ObservationWriteResult, SyncSummary
+from app.data_sources.bea.exceptions import BeaError, BeaRequestError
+from app.data_sources.bea.schemas import BeaPayload
 from app.data_sources.bls.exceptions import BlsRequestError
 from app.data_sources.bls.schemas import BlsPayload
 from app.data_sources.fred.exceptions import FredRequestError
@@ -97,6 +99,27 @@ def record_successful_bls_request(session: Session, run_id: UUID, payload: BlsPa
     )
 
 
+def record_successful_bea_request(session: Session, run_id: UUID, payload: BeaPayload) -> None:
+    """Persist one credential-free BEA request audit record."""
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="bea",
+            endpoint=payload.endpoint,
+            series_id=None,
+            request_parameters_json=payload.sanitized_parameters,
+            started_at=payload.started_at,
+            finished_at=payload.finished_at,
+            http_status=payload.status_code,
+            success=True,
+            attempt_count=payload.attempt_count,
+            response_hash=payload.response_hash,
+            response_path=str(payload.response_path) if payload.response_path else None,
+            from_cache=payload.from_cache,
+        )
+    )
+
+
 def record_failed_bls_request(
     session: Session,
     run_id: UUID,
@@ -126,6 +149,41 @@ def record_failed_bls_request(
             attempt_count=error.attempt_count if isinstance(error, BlsRequestError) else 1,
             error_type=type(error).__name__,
             error_message=str(error),
+        )
+    )
+
+
+def record_failed_bea_request(
+    session: Session,
+    run_id: UUID,
+    *,
+    endpoint: str,
+    parameters: dict[str, object],
+    error: Exception,
+) -> None:
+    """Persist a credential-free failed BEA request without a UserID."""
+    now = datetime.now(UTC)
+    safe = {
+        key: value
+        for key, value in parameters.items()
+        if key.lower() not in {"userid", "user_id", "api_key"}
+    }
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="bea",
+            endpoint=endpoint,
+            series_id=None,
+            request_parameters_json=safe,
+            started_at=now,
+            finished_at=now,
+            http_status=(error.status_code if isinstance(error, BeaRequestError) else None),
+            success=False,
+            attempt_count=(error.attempt_count if isinstance(error, BeaRequestError) else 1),
+            error_type=type(error).__name__,
+            error_message=(
+                str(error) if isinstance(error, BeaError) else "Unexpected BEA request failure"
+            ),
         )
     )
 

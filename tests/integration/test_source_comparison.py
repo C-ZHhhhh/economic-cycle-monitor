@@ -20,7 +20,7 @@ def _observation(source: str, when: date, value: str) -> RawObservation:
         value=Decimal(value),
         source=source,
         retrieved_at=datetime.now(UTC),
-        raw_payload_hash=("b" if source == "bls" else "f") * 64,
+        raw_payload_hash=source[0] * 64,
     )
 
 
@@ -94,3 +94,89 @@ def test_comparison_blocks_incompatible_semantics(
     )
     assert summary.results[0]["counts"] == {expected: 1}
     assert summary.quality_event_count == 1
+
+
+@pytest.mark.integration
+def test_bea_comparison_uses_canonical_values_and_dynamic_missing_status(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    postgres_session.add_all(
+        [
+            RawObservation(
+                indicator_id="US_REAL_GDP",
+                observation_date=date(2025, 1, 1),
+                value=Decimal("22100.5"),
+                source="bea",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="b" * 64,
+                source_details_json={
+                    "raw_value": "22,100.5",
+                    "cl_unit": "Billions of chained 2017 dollars",
+                    "unit_mult": "9",
+                    "canonical_value": "22100.5",
+                },
+            ),
+            RawObservation(
+                indicator_id="US_REAL_GDP",
+                observation_date=date(2025, 1, 1),
+                value=Decimal("22100.5"),
+                source="fred",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="f" * 64,
+            ),
+            RawObservation(
+                indicator_id="US_REAL_GDP",
+                observation_date=date(2024, 10, 1),
+                value=Decimal("22000"),
+                source="fred",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="f" * 64,
+            ),
+        ]
+    )
+    postgres_session.flush()
+
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_REAL_GDP", primary_source="bea", secondary_source="fred"
+        )
+    )
+
+    assert summary.results[0]["counts"] == {"match": 1, "missing_in_bea": 1}
+
+
+@pytest.mark.integration
+def test_bea_comparison_rejects_missing_unit_multiplier_audit_evidence(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    postgres_session.add_all(
+        [
+            RawObservation(
+                indicator_id="US_REAL_GDP",
+                observation_date=date(2025, 1, 1),
+                value=Decimal("22100.5"),
+                source="bea",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="b" * 64,
+            ),
+            RawObservation(
+                indicator_id="US_REAL_GDP",
+                observation_date=date(2025, 1, 1),
+                value=Decimal("22100.5"),
+                source="fred",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="f" * 64,
+            ),
+        ]
+    )
+    postgres_session.flush()
+
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_REAL_GDP", primary_source="bea", secondary_source="fred"
+        )
+    )
+
+    assert summary.results[0]["counts"] == {"normalization_mismatch": 1}

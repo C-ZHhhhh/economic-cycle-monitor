@@ -19,21 +19,23 @@ from app.database.models import (
     SourceComparisonResult,
 )
 from app.indicators.repository import get_indicator
-from app.source_mappings.config import load_source_mapping_catalog
+from app.source_mappings.config import load_source_mapping_catalog_for
 from app.source_mappings.repository import list_source_mappings, seed_source_mappings
+from app.source_mappings.schemas import SourceMappingDefinition
 
 
 class SourceComparisonService:
-    """Compare BLS and FRED by aligned indicator/date in bounded pages."""
+    """Compare one supported official source and FRED in bounded pages."""
 
     def __init__(self, session: Session) -> None:
         self.session = session
-        self.catalog = load_source_mapping_catalog()
-        self.definitions = {item.indicator_id: item for item in self.catalog.mappings}
+        self.definitions: dict[str, SourceMappingDefinition] = {}
 
     def compare(self, options: SourceComparisonOptions) -> SyncSummary:
         """Compare selected mappings without resolving conflicts automatically."""
-        seed_source_mappings(self.session, self.catalog)
+        catalog = load_source_mapping_catalog_for(options.primary_source)
+        self.definitions = {item.indicator_id: item for item in catalog.mappings}
+        seed_source_mappings(self.session, catalog)
         mappings = self._select_mappings(options)
         run = start_sync_run(
             self.session,
@@ -106,7 +108,7 @@ class SourceComparisonService:
         return summary
 
     def _select_mappings(self, options: SourceComparisonOptions) -> list[IndicatorSourceMapping]:
-        if options.primary_source != "bls" or options.secondary_source != "fred":
+        if options.primary_source not in {"bls", "bea"} or options.secondary_source != "fred":
             return []
         mappings = list_source_mappings(
             self.session,
@@ -188,7 +190,7 @@ class SourceComparisonService:
                 source=options.primary_source,
                 message="Source comparison blocked by incompatible seasonal adjustment",
             )
-        elif mapping.normalization_rule != "identity":
+        elif mapping.normalization_rule not in {"identity", "bea_unit_multiplier"}:
             status = "not_comparable"
             issue = official_source_issue(
                 indicator.indicator_id,
@@ -198,16 +200,32 @@ class SourceComparisonService:
                 message="Configured normalization rule is not implemented",
                 details={"normalization_rule": mapping.normalization_rule},
             )
+        elif (
+            mapping.normalization_rule == "bea_unit_multiplier"
+            and primary is not None
+            and not self._bea_normalization_is_auditable(primary)
+        ):
+            status = "normalization_mismatch"
+            issue = official_source_issue(
+                indicator.indicator_id,
+                event_type=status,
+                severity="error",
+                source=options.primary_source,
+                message="BEA canonical value lacks consistent UNIT_MULT audit evidence",
+            )
         elif primary_value is None and secondary_value is None:
             status = "not_comparable"
         elif primary_value is None:
-            status = "missing_in_bls"
+            status = f"missing_in_{options.primary_source}"
             issue = official_source_issue(
                 indicator.indicator_id,
                 event_type="missing_in_primary_source",
                 severity="warning",
                 source=options.primary_source,
-                message="Observation is missing from the primary BLS source",
+                message=(
+                    "Observation is missing from the primary "
+                    f"{options.primary_source.upper()} source"
+                ),
                 details={"observation_date": observation_date},
             )
         elif secondary_value is None:
@@ -222,7 +240,10 @@ class SourceComparisonService:
                 status = "distribution_lag"
                 severity = "info"
                 event_type = "distribution_lag"
-                message = "Fallback distribution has not yet published the BLS observation"
+                message = (
+                    "Fallback distribution has not yet published the "
+                    f"{options.primary_source.upper()} observation"
+                )
             else:
                 status = "missing_in_fred"
                 severity = "warning"
@@ -288,12 +309,26 @@ class SourceComparisonService:
         )
         return result, issue
 
+    @staticmethod
+    def _bea_normalization_is_auditable(observation: RawObservation) -> bool:
+        """Require raw unit fields and a canonical value equal to the stored value."""
+        details = observation.source_details_json
+        required = {"raw_value", "cl_unit", "unit_mult", "canonical_value"}
+        if not required.issubset(details) or details["canonical_value"] is None:
+            return False
+        try:
+            return Decimal(str(details["canonical_value"])) == Decimal(observation.value)
+        except (ArithmeticError, ValueError):
+            return False
+
 
 def list_source_comparisons(
     session: Session,
     *,
     indicator_id: str | None = None,
     comparison_status: str | None = None,
+    primary_source: str | None = None,
+    secondary_source: str | None = None,
     offset: int = 0,
     limit: int = 100,
 ) -> list[SourceComparisonResult]:
@@ -303,6 +338,10 @@ def list_source_comparisons(
         statement = statement.where(SourceComparisonResult.indicator_id == indicator_id)
     if comparison_status is not None:
         statement = statement.where(SourceComparisonResult.comparison_status == comparison_status)
+    if primary_source is not None:
+        statement = statement.where(SourceComparisonResult.primary_source == primary_source)
+    if secondary_source is not None:
+        statement = statement.where(SourceComparisonResult.secondary_source == secondary_source)
     return list(
         session.scalars(
             statement.order_by(SourceComparisonResult.created_at.desc()).offset(offset).limit(limit)
