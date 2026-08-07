@@ -110,10 +110,17 @@ def validate_bea_metadata(
         text = f"{row.CL_UNIT} {row.METRIC_NAME}".lower()
         unit_tokens = _tokens(text)
         has_dollars = any(token.startswith("dollar") for token in unit_tokens)
-        if expected_kind == "chained_dollars" and (
-            not {"chained", "2017"}.issubset(unit_tokens) or not has_dollars
-        ):
-            result.errors.append("BEA unit metadata is not chained 2017 dollars")
+        if expected_kind == "chained_dollars" and ("chained" not in unit_tokens or not has_dollars):
+            message = "BEA unit metadata is not chained dollars"
+            if message not in result.errors:
+                result.errors.append(message)
+        elif expected_kind == "chained_dollars" and "2017" not in unit_tokens:
+            message = (
+                "BEA row unit metadata omits the chained-dollar reference year; "
+                "exact table identity and FRED comparison remain required"
+            )
+            if message not in result.warnings:
+                result.warnings.append(message)
         if expected_kind == "index" and not {"index", "2017"}.issubset(_tokens(text)):
             result.errors.append("BEA unit metadata is not an index with reference year 2017")
         try:

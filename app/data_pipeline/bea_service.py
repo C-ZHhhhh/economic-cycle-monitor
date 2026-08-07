@@ -30,7 +30,7 @@ from app.data_sources.bea.adapter import BeaAdapter
 from app.data_sources.bea.client import BeaClient
 from app.data_sources.bea.exceptions import BeaBusinessError, BeaError
 from app.data_sources.bea.metadata import BeaMetadataValidation, validate_bea_metadata
-from app.data_sources.bea.schemas import BeaNipaDataRow, BeaPayload
+from app.data_sources.bea.schemas import BeaNipaDataRow, BeaParameterValue, BeaPayload
 from app.database.models import IndicatorRegistry, IndicatorSourceMapping
 from app.indicators.repository import get_indicator
 from app.settings import Settings
@@ -49,6 +49,30 @@ def split_bea_years(start_year: int, end_year: int, batch_size: int) -> list[lis
         raise ValueError("BEA year batch size must be positive")
     years = list(range(start_year, end_year + 1))
     return [years[index : index + batch_size] for index in range(0, len(years), batch_size)]
+
+
+def bea_year_is_available(
+    values: list[BeaParameterValue], *, table_name: str, frequency: str, year: int
+) -> bool:
+    """Check BEA table/frequency year bounds returned by GetParameterValues."""
+    field_names = {
+        "A": ("FirstAnnualYear", "LastAnnualYear"),
+        "Q": ("FirstQuarterlyYear", "LastQuarterlyYear"),
+        "M": ("FirstMonthlyYear", "LastMonthlyYear"),
+    }
+    fields = field_names.get(frequency.upper())
+    if fields is None:
+        return False
+    for item in values:
+        if item.Key != table_name:
+            continue
+        first = getattr(item, fields[0])
+        last = getattr(item, fields[1])
+        try:
+            return first is not None and last is not None and int(first) <= year <= int(last)
+        except ValueError:
+            return False
+    return False
 
 
 class BeaPipelineService:
@@ -129,8 +153,24 @@ class BeaPipelineService:
 
             year_values, payload = await self.client.get_parameter_values("Year")
             self._record_payload(summary, run.run_id, payload)
-            if str(date.today().year) not in {item.Key for item in year_values}:
-                raise RuntimeError("BEA parameter discovery omitted the current year")
+            current_year = date.today().year
+            unavailable = [
+                (
+                    str(definition.source_parameters["table_name"]),
+                    str(definition.source_parameters["frequency"]),
+                )
+                for _, _, definition in selected
+                if not bea_year_is_available(
+                    year_values,
+                    table_name=str(definition.source_parameters["table_name"]),
+                    frequency=str(definition.source_parameters["frequency"]),
+                    year=current_year,
+                )
+            ]
+            if unavailable:
+                raise RuntimeError(
+                    f"BEA parameter discovery omitted current-year coverage for {unavailable}"
+                )
         except Exception as error:
             self._record_discovery_failure(run.run_id, error)
             self._fail_group(summary, selected, error, run.run_id)

@@ -250,7 +250,17 @@ async def test_bea_discovery_and_exact_get_data_leave_candidate_pending(
             values = {
                 "TableName": [{"Key": "T10106"}],
                 "Frequency": [{"Key": "Q"}],
-                "Year": [{"Key": str(date.today().year)}],
+                "Year": [
+                    {
+                        "TableName": "T10106",
+                        "FirstAnnualYear": "1929",
+                        "LastAnnualYear": str(date.today().year),
+                        "FirstQuarterlyYear": "1947",
+                        "LastQuarterlyYear": str(date.today().year),
+                        "FirstMonthlyYear": "0",
+                        "LastMonthlyYear": "0",
+                    }
+                ],
             }[parameter]
             return httpx.Response(200, json={"BEAAPI": {"Results": {"ParamValue": values}}})
         assert method == "GetData"

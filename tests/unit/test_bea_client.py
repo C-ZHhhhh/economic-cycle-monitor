@@ -78,6 +78,40 @@ async def test_metadata_methods_parse_and_redact_key(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_parameter_values_accept_official_parameter_specific_fields(
+    tmp_path: Path,
+) -> None:
+    payloads = {
+        "TableName": {"TableName": "T10106", "Description": "Real GDP"},
+        "Frequency": {"FrequencyID": "Q", "Description": "Quarterly"},
+        "Year": {
+            "TableName": "T10106",
+            "FirstQuarterlyYear": "1947",
+            "LastQuarterlyYear": "2026",
+            "FirstAnnualYear": "1929",
+            "LastAnnualYear": "2025",
+            "FirstMonthlyYear": "0",
+            "LastMonthlyYear": "0",
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        parameter = request.url.params["ParameterName"]
+        return httpx.Response(200, json=_envelope("ParamValue", [payloads[parameter]]))
+
+    async with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        table, _ = await client.get_parameter_values("TableName")
+        frequency, _ = await client.get_parameter_values("Frequency")
+        year, _ = await client.get_parameter_values("Year")
+
+    assert (table[0].Key, table[0].Desc) == ("T10106", "Real GDP")
+    assert (frequency[0].Key, frequency[0].Desc) == ("Q", "Quarterly")
+    assert year[0].Key == "T10106"
+    assert year[0].FirstQuarterlyYear == "1947"
+    assert year[0].LastQuarterlyYear == "2026"
+
+
+@pytest.mark.asyncio
 async def test_get_data_uses_one_table_explicit_years_and_parses_rows(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["TableName"] == "T10106"

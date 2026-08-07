@@ -61,6 +61,25 @@ def test_non_candidate_multiplier_is_warning_when_normalizable() -> None:
     assert any("mathematically normalizable" in item for item in result.warnings)
 
 
+def test_live_shape_chained_dollars_level_is_normalizable_with_reference_warning() -> None:
+    result = validate_bea_metadata(
+        _definition(),
+        [
+            _gdp_row(
+                METRIC_NAME="Chained Dollars",
+                CL_UNIT="Level",
+                UNIT_MULT="6",
+                DataValue="24,180,419",
+            )
+        ],
+    )
+
+    assert result.identity_confirmed is True
+    assert result.errors == []
+    assert any("reference year" in item for item in result.warnings)
+    assert any("mathematically normalizable" in item for item in result.warnings)
+
+
 def test_frequency_and_economic_meaning_are_required() -> None:
     result = validate_bea_metadata(
         _definition(),

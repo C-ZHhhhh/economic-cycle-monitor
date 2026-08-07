@@ -35,6 +35,28 @@ class BeaParameterValue(BaseModel):
 
     Key: str
     Desc: str = ""
+    FirstAnnualYear: str | None = None
+    FirstMonthlyYear: str | None = None
+    FirstQuarterlyYear: str | None = None
+    LastAnnualYear: str | None = None
+    LastMonthlyYear: str | None = None
+    LastQuarterlyYear: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_parameter_value_fields(cls, value: Any) -> Any:
+        """Normalize BEA parameter-specific keys into one internal pair."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if "Key" not in normalized:
+            for alias in ("TableName", "FrequencyID", "Frequency", "Year"):
+                if alias in normalized:
+                    normalized["Key"] = normalized[alias]
+                    break
+        if "Desc" not in normalized and "Description" in normalized:
+            normalized["Desc"] = normalized["Description"]
+        return normalized
 
 
 class BeaNipaDataRow(BaseModel):
