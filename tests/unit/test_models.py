@@ -10,7 +10,7 @@ from app.database.base import Base
 from app.database.models import AgentReport, RawObservation
 
 
-def test_metadata_contains_stage_one_and_stage_two_tables() -> None:
+def test_metadata_contains_stage_one_through_stage_two_b_tables() -> None:
     assert set(Base.metadata.tables) == {
         "indicator_registry",
         "raw_observations",
@@ -23,6 +23,8 @@ def test_metadata_contains_stage_one_and_stage_two_tables() -> None:
         "sync_runs",
         "data_source_requests",
         "data_quality_events",
+        "indicator_source_mappings",
+        "source_comparison_results",
     }
 
 

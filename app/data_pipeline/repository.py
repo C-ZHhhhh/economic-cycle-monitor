@@ -1,4 +1,4 @@
-"""PostgreSQL persistence for FRED requests, observations, revisions, and runs."""
+"""PostgreSQL persistence for source requests, observations, revisions, and runs."""
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -9,8 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import ObservationWriteResult, SyncSummary
+from app.data_sources.bls.exceptions import BlsRequestError
+from app.data_sources.bls.schemas import BlsPayload
 from app.data_sources.fred.exceptions import FredRequestError
 from app.data_sources.fred.schemas import FredObservation, FredPayload
+from app.data_sources.official.schemas import OfficialObservation
 from app.database.models import (
     DataSourceRequest,
     IndicatorRegistry,
@@ -73,6 +76,60 @@ def record_successful_request(session: Session, run_id: UUID, payload: FredPaylo
     )
 
 
+def record_successful_bls_request(session: Session, run_id: UUID, payload: BlsPayload) -> None:
+    """Persist one secret-free BLS batch request audit record."""
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="bls",
+            endpoint=payload.endpoint,
+            series_id=None,
+            request_parameters_json=payload.sanitized_parameters,
+            started_at=payload.started_at,
+            finished_at=payload.finished_at,
+            http_status=payload.status_code,
+            success=True,
+            attempt_count=payload.attempt_count,
+            response_hash=payload.response_hash,
+            response_path=str(payload.response_path) if payload.response_path else None,
+            from_cache=payload.from_cache,
+        )
+    )
+
+
+def record_failed_bls_request(
+    session: Session,
+    run_id: UUID,
+    *,
+    series_ids: list[str],
+    start_year: int,
+    end_year: int,
+    error: Exception,
+) -> None:
+    """Persist a credential-free failed BLS batch request."""
+    now = datetime.now(UTC)
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="bls",
+            endpoint="timeseries/data/",
+            series_id=None,
+            request_parameters_json={
+                "seriesid": series_ids,
+                "startyear": str(start_year),
+                "endyear": str(end_year),
+            },
+            started_at=now,
+            finished_at=now,
+            http_status=error.status_code if isinstance(error, BlsRequestError) else None,
+            success=False,
+            attempt_count=error.attempt_count if isinstance(error, BlsRequestError) else 1,
+            error_type=type(error).__name__,
+            error_message=str(error),
+        )
+    )
+
+
 def record_failed_request(
     session: Session,
     run_id: UUID,
@@ -113,6 +170,116 @@ def latest_observation_date(session: Session, indicator_id: str) -> date | None:
             RawObservation.source == "fred",
         )
     )
+
+
+def latest_source_observation_date(
+    session: Session, indicator_id: str, *, source: str
+) -> date | None:
+    """Return the newest observation date for one independently stored source."""
+    return session.scalar(
+        select(func.max(RawObservation.observation_date)).where(
+            RawObservation.indicator_id == indicator_id,
+            RawObservation.source == source,
+        )
+    )
+
+
+def persist_official_observations(
+    session: Session,
+    *,
+    indicator: IndicatorRegistry,
+    source: str,
+    source_series_id: str,
+    observations: list[OfficialObservation],
+    payload_hash: str,
+    retrieved_at: datetime,
+    dry_run: bool = False,
+    batch_size: int = 1000,
+) -> ObservationWriteResult:
+    """Persist a named official source and append same-source revisions."""
+    result = ObservationWriteResult()
+    dated = [item for item in observations if item.value is not None]
+    result.missing = len(observations) - len(dated)
+    if not dated:
+        return result
+    dates = [item.date for item in dated]
+    current = {
+        item.observation_date: item
+        for item in session.scalars(
+            select(RawObservation).where(
+                RawObservation.indicator_id == indicator.indicator_id,
+                RawObservation.source == source,
+                RawObservation.observation_date.in_(dates),
+            )
+        ).all()
+    }
+    for position, item in enumerate(dated, start=1):
+        assert item.value is not None
+        details = {
+            "source_series_id": source_series_id,
+            "source_period": item.source_period,
+            "is_preliminary": item.is_preliminary,
+            "footnotes": item.footnotes,
+            **item.details,
+        }
+        existing = current.get(item.date)
+        if existing is None:
+            result.inserted += 1
+            if not dry_run:
+                session.add(
+                    RawObservation(
+                        indicator_id=indicator.indicator_id,
+                        observation_date=item.date,
+                        value=item.value,
+                        source=source,
+                        retrieved_at=retrieved_at,
+                        raw_payload_hash=payload_hash,
+                        source_vintage_date=retrieved_at.date(),
+                        source_details_json=details,
+                    )
+                )
+                if position % batch_size == 0:
+                    session.flush()
+            continue
+        if Decimal(existing.value) == item.value:
+            result.unchanged += 1
+            continue
+        result.revised += 1
+        if dry_run:
+            continue
+        revision_number = session.scalar(
+            select(func.coalesce(func.max(ObservationVintage.revision_number), 0)).where(
+                ObservationVintage.indicator_id == indicator.indicator_id,
+                ObservationVintage.observation_date == item.date,
+                ObservationVintage.source == source,
+            )
+        )
+        session.add(
+            ObservationVintage(
+                indicator_id=indicator.indicator_id,
+                observation_date=item.date,
+                vintage_date=retrieved_at.date(),
+                available_at=retrieved_at,
+                release_stage="revision",
+                revision_number=int(revision_number or 0) + 1,
+                previous_value=existing.value,
+                current_value=item.value,
+                source=source,
+                source_vintage_date=retrieved_at.date(),
+                retrieved_at=retrieved_at,
+                raw_payload_hash=payload_hash,
+                source_details_json=details,
+            )
+        )
+        existing.value = item.value
+        existing.retrieved_at = retrieved_at
+        existing.raw_payload_hash = payload_hash
+        existing.source_vintage_date = retrieved_at.date()
+        existing.source_details_json = details
+        if position % batch_size == 0:
+            session.flush()
+    session.flush()
+    return result
 
 
 def persist_observations(

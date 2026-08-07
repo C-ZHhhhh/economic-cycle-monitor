@@ -1,11 +1,11 @@
 # Economic Cycle Monitor
 
 一个面向个人研究的全球经济周期多 Agent 监测系统。本仓库当前实现
-**US Macro Cycle Agent 阶段 2：FRED 宏观数据管道**。
+**US Macro Cycle Agent 阶段 2B-1：BLS 官方源适配器**。
 
 当前版本在阶段 1 基础上提供 33 项美国宏观指标目录、FRED 元数据验证、历史
-回填、增量修订、按需 ALFRED vintage、原始响应留档、缓存、15 项数据质量规则、
-同步审计、CLI 和只读 API。它不执行投资交易，也不计算评分或调用真实 LLM。
+回填、增量修订、按需 ALFRED vintage，以及 14 项 BLS 官方序列的批量回填、同源
+修订和 FRED 交叉验证。BLS 与 FRED 按来源独立保存，不执行评分或调用真实 LLM。
 
 ## 环境与安装
 
@@ -25,6 +25,9 @@ alembic upgrade head
 `.env` 仅供本机使用，不要提交。将真实 `FRED_API_KEY` 只写入本机 `.env`；
 不要在命令行参数、日志、截图、Issue 或 PR 中粘贴密钥。状态接口与
 `show-config` 只显示是否已配置。
+
+BLS 默认关闭。只有手动 Smoke Test 才设置 `BLS_ENABLED=true`；`BLS_API_KEY` 可留空
+使用公共配额。任何 BLS 凭据也只存在于本机 `.env`。
 
 首次运行集成测试前创建测试库：
 
@@ -48,6 +51,12 @@ python -m app.cli fetch-fred-vintage --indicator US_REAL_GDP --vintage-date 2020
 python -m app.cli check-data-quality --output outputs/data_quality.json
 python -m app.cli show-sync-status
 python -m app.cli clear-fred-cache
+python -m app.cli validate-bls-mappings --indicator US_CPI
+python -m app.cli backfill-bls --indicator US_CPI --start 2024
+python -m app.cli sync-bls --indicator US_CPI
+python -m app.cli compare-sources --primary bls --secondary fred --indicator US_CPI
+python -m app.cli show-source-status bls
+python -m app.cli clear-bls-cache
 ```
 
 首次抓取前依次执行迁移、`seed-indicators` 和 `validate-fred-metadata`。元数据为
@@ -76,6 +85,9 @@ OpenAPI UI 位于 <http://127.0.0.1:8000/docs>。
 | GET | `/api/v1/indicators/{indicator_id}` | 指标、最新值与质量摘要 |
 | GET | `/api/v1/indicators/{indicator_id}/observations` | 分页查询当前值或 vintage |
 | GET | `/api/v1/data-sources/fred/status` | FRED 脱敏状态 |
+| GET | `/api/v1/data-sources/bls/status` | BLS 脱敏状态 |
+| GET | `/api/v1/source-mappings[/{indicator_id}]` | 分页查询官方源映射 |
+| GET | `/api/v1/source-comparisons[/{indicator_id}]` | 分页查询交叉验证结果 |
 | GET | `/api/v1/data-quality` | 分页查询质量事件 |
 | GET | `/api/v1/sync-runs`、`/api/v1/sync-runs/{run_id}` | 同步审计 |
 
@@ -117,7 +129,7 @@ FRED 是当前数据入口；ALFRED 实时历史能力仅按需使用，阶段 2
 
 ## 当前未实现
 
-- BLS、BEA、Census 抓取与 FRED 之外的 fallback
+- BEA、Census、Federal Reserve、DOL 官方源适配器
 - 特征计算、评分、周期判断和 Nowcast
 - DeepSeek 或其他真实 LLM 请求
 - 自动调度、并行 Agent、综合判断 Agent

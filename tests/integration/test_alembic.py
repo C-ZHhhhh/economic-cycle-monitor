@@ -23,10 +23,14 @@ def test_alembic_creates_all_tables(postgres_engine: Engine) -> None:
         "sync_runs",
         "data_source_requests",
         "data_quality_events",
+        "indicator_source_mappings",
+        "source_comparison_results",
     } <= tables
 
 
-def test_stage_one_stage_two_downgrade_and_reupgrade(postgres_engine: Engine) -> None:
+def test_stage_one_through_stage_two_b_downgrade_and_reupgrade(
+    postgres_engine: Engine,
+) -> None:
     config = Config("alembic.ini")
     config.attributes["database_url"] = postgres_engine.url.render_as_string(hide_password=False)
 
@@ -36,5 +40,11 @@ def test_stage_one_stage_two_downgrade_and_reupgrade(postgres_engine: Engine) ->
     assert "sync_runs" not in stage_one_tables
 
     command.upgrade(config, "head")
-    stage_two_tables = set(inspect(postgres_engine).get_table_names())
-    assert {"sync_runs", "data_source_requests", "data_quality_events"} <= stage_two_tables
+    current_tables = set(inspect(postgres_engine).get_table_names())
+    assert {
+        "sync_runs",
+        "data_source_requests",
+        "data_quality_events",
+        "indicator_source_mappings",
+        "source_comparison_results",
+    } <= current_tables

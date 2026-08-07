@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.data_sources.fred.metadata import MetadataValidationResult
 from app.data_sources.fred.schemas import FredObservation
+from app.data_sources.official.schemas import OfficialObservation
 
 Severity = Literal["info", "warning", "error", "critical"]
 
@@ -29,6 +30,19 @@ QUALITY_RULES = (
     "source_unavailable",
     "raw_response_hash_conflict",
     "duplicate_vintage",
+    "source_mapping_missing",
+    "source_metadata_mismatch",
+    "source_series_unavailable",
+    "source_response_partial",
+    "source_business_error",
+    "distribution_lag",
+    "missing_in_primary_source",
+    "missing_in_fallback_source",
+    "normalization_mismatch",
+    "seasonal_adjustment_mismatch",
+    "source_value_conflict",
+    "source_revision_detected",
+    "duplicate_official_observation",
 )
 
 
@@ -226,6 +240,93 @@ def source_unavailable_issue(indicator_id: str, error: Exception) -> QualityIssu
         event_type="source_unavailable",
         severity="error",
         message=f"FRED request failed: {type(error).__name__}",
+    )
+
+
+def check_official_observation_batch(
+    indicator_id: str,
+    observations: list[OfficialObservation],
+    *,
+    source: str,
+    today: date | None = None,
+) -> list[QualityIssue]:
+    """Validate provider-neutral observations without assuming FRED semantics."""
+    current_date = today or datetime.now(UTC).date()
+    if not observations:
+        return [
+            QualityIssue(
+                indicator_id=indicator_id,
+                event_type="source_series_unavailable",
+                severity="warning",
+                message=f"{source.upper()} returned no observations for the requested series",
+                details={"source": source},
+            )
+        ]
+    issues: list[QualityIssue] = []
+    seen: set[date] = set()
+    previous: date | None = None
+    for item in observations:
+        if item.value is None:
+            issues.append(
+                QualityIssue(
+                    indicator_id=indicator_id,
+                    event_type="missing_value",
+                    severity="warning",
+                    message=f"{source.upper()} returned a missing observation value",
+                    details={"source": source, "observation_date": item.date},
+                )
+            )
+        if item.date in seen:
+            issues.append(
+                QualityIssue(
+                    indicator_id=indicator_id,
+                    event_type="duplicate_official_observation",
+                    severity="error",
+                    message="Official-source response contains a duplicate observation date",
+                    details={"source": source, "observation_date": item.date},
+                )
+            )
+        if previous is not None and item.date < previous:
+            issues.append(
+                QualityIssue(
+                    indicator_id=indicator_id,
+                    event_type="non_monotonic_dates",
+                    severity="error",
+                    message="Official-source observations are not monotonic",
+                    details={"source": source, "observation_date": item.date},
+                )
+            )
+        if item.date > current_date:
+            issues.append(
+                QualityIssue(
+                    indicator_id=indicator_id,
+                    event_type="observation_date_in_future",
+                    severity="error",
+                    message="Official-source observation date is in the future",
+                    details={"source": source, "observation_date": item.date},
+                )
+            )
+        seen.add(item.date)
+        previous = item.date
+    return issues
+
+
+def official_source_issue(
+    indicator_id: str | None,
+    *,
+    event_type: str,
+    severity: Severity,
+    source: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> QualityIssue:
+    """Create a source-aware finding with stable, credential-free details."""
+    return QualityIssue(
+        indicator_id=indicator_id,
+        event_type=event_type,
+        severity=severity,
+        message=message,
+        details={"source": source, **(details or {})},
     )
 
 

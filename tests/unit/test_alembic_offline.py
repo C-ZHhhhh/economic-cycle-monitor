@@ -14,4 +14,6 @@ def test_initial_migration_renders_postgresql_sql() -> None:
     sql = output.getvalue()
     assert "CREATE TABLE indicator_registry" in sql
     assert "CREATE TABLE agent_reports" in sql
+    assert "CREATE TABLE indicator_source_mappings" in sql
+    assert "CREATE TABLE source_comparison_results" in sql
     assert "JSONB" in sql

@@ -49,7 +49,19 @@ class Settings(BaseSettings):
     cache_dir: Path = Path("data/cache")
     output_dir: Path = Path("outputs")
     bea_api_key: SecretStr | None = None
+    bls_enabled: bool = False
     bls_api_key: SecretStr | None = None
+    bls_base_url: HttpUrl = HttpUrl("https://api.bls.gov/publicAPI/v2")
+    bls_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    bls_max_retries: int = Field(default=3, ge=0, le=8)
+    bls_retry_base_seconds: float = Field(default=1.0, ge=0, le=30)
+    bls_cache_enabled: bool = True
+    bls_cache_ttl_seconds: int = Field(default=3600, ge=0)
+    bls_registered_max_series: int = Field(default=50, ge=1, le=50)
+    bls_registered_max_years: int = Field(default=20, ge=1, le=20)
+    bls_unregistered_max_series: int = Field(default=25, ge=1, le=25)
+    bls_unregistered_max_years: int = Field(default=10, ge=1, le=10)
+    bls_default_backfill_start_year: int = Field(default=2000, ge=1913, le=2100)
     census_api_key: SecretStr | None = None
 
     fetch_concurrency: int = Field(default=4, ge=1, le=16)
@@ -98,7 +110,11 @@ class Settings(BaseSettings):
             "fred_cache_enabled": self.fred_cache_enabled,
             "fred_cache_ttl_seconds": self.fred_cache_ttl_seconds,
             "bea_api_key": "***" if self.bea_api_key else None,
+            "bls_enabled": self.bls_enabled,
             "bls_api_key": "***" if self.bls_api_key else None,
+            "bls_base_url": str(self.bls_base_url),
+            "bls_cache_enabled": self.bls_cache_enabled,
+            "bls_cache_ttl_seconds": self.bls_cache_ttl_seconds,
             "census_api_key": "***" if self.census_api_key else None,
             "fetch_concurrency": self.fetch_concurrency,
             "per_source_fetch_concurrency": self.per_source_fetch_concurrency,

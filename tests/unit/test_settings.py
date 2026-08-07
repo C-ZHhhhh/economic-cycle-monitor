@@ -28,6 +28,7 @@ def test_safe_summary_redacts_every_key(monkeypatch: pytest.MonkeyPatch) -> None
     rendered = str(summary)
     assert all(value not in rendered for value in secrets.values())
     assert summary["deepseek_api_key"] == "***"
+    assert summary["bls_api_key"] == "***"
     assert "database_url" not in summary
 
 

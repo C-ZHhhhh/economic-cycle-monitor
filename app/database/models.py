@@ -121,6 +121,9 @@ class RawObservation(TimestampMixin, Base):
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     raw_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     source_vintage_date: Mapped[date | None] = mapped_column(Date)
+    source_details_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default="{}", nullable=False
+    )
 
 
 class ObservationVintage(TimestampMixin, Base):
@@ -161,6 +164,106 @@ class ObservationVintage(TimestampMixin, Base):
     source_vintage_date: Mapped[date | None] = mapped_column(Date)
     retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_payload_hash: Mapped[str | None] = mapped_column(String(64))
+    source_details_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default="{}", nullable=False
+    )
+
+
+class IndicatorSourceMapping(TimestampMixin, Base):
+    """Versioned mapping from an indicator to one official-source series."""
+
+    __tablename__ = "indicator_source_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "indicator_id",
+            "source",
+            "source_series_id",
+            "mapping_version",
+            name="uq_indicator_source_mapping_version",
+        ),
+        Index("ix_source_mappings_source_enabled", "source", "enabled"),
+        Index("ix_source_mappings_indicator_priority", "indicator_id", "source_priority"),
+        Index("ix_source_mappings_status", "mapping_status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    indicator_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(INDICATOR_FK, onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_series_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_dataset: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_unit: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_frequency: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_seasonal_adjustment: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_priority: Mapped[int] = mapped_column(Integer, nullable=False)
+    fallback_source: Mapped[str | None] = mapped_column(String(64))
+    vintage_source: Mapped[str | None] = mapped_column(String(64))
+    normalization_rule: Mapped[str] = mapped_column(String(128), nullable=False)
+    comparison_tolerance: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    distribution_lag_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    revision_lookback_years: Mapped[int] = mapped_column(Integer, nullable=False)
+    mapping_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    mapping_warnings_json: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default="[]", nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    mapping_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+
+class SourceComparisonResult(TimestampMixin, Base):
+    """Auditable point comparison between two independently stored sources."""
+
+    __tablename__ = "source_comparison_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "indicator_id",
+            "observation_date",
+            "primary_source",
+            "secondary_source",
+            name="uq_source_comparison_run_point",
+        ),
+        Index("ix_source_comparisons_indicator_date", "indicator_id", "observation_date"),
+        Index("ix_source_comparisons_run_status", "run_id", "comparison_status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(SYNC_RUN_FK, ondelete="SET NULL")
+    )
+    indicator_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(INDICATOR_FK, onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+    )
+    observation_date: Mapped[date] = mapped_column(Date, nullable=False)
+    primary_source: Mapped[str] = mapped_column(String(64), nullable=False)
+    secondary_source: Mapped[str] = mapped_column(String(64), nullable=False)
+    primary_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    secondary_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    normalized_primary_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    normalized_secondary_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    absolute_difference: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    relative_difference: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    tolerance: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    comparison_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    details_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default="{}", nullable=False
+    )
 
 
 class SyncRun(TimestampMixin, Base):
