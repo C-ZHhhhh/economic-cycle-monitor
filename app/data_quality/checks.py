@@ -43,6 +43,9 @@ QUALITY_RULES = (
     "source_value_conflict",
     "source_revision_detected",
     "duplicate_official_observation",
+    "invalid_unit_multiplier",
+    "unexpected_table_line",
+    "unexpected_series_code",
 )
 
 

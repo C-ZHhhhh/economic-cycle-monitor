@@ -48,7 +48,16 @@ class Settings(BaseSettings):
     raw_data_dir: Path = Path("data/raw")
     cache_dir: Path = Path("data/cache")
     output_dir: Path = Path("outputs")
+    bea_enabled: bool = False
     bea_api_key: SecretStr | None = None
+    bea_base_url: HttpUrl = HttpUrl("https://apps.bea.gov/api/data")
+    bea_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    bea_max_retries: int = Field(default=3, ge=0, le=8)
+    bea_retry_base_seconds: float = Field(default=1.0, ge=0, le=30)
+    bea_cache_enabled: bool = True
+    bea_cache_ttl_seconds: int = Field(default=3600, ge=0)
+    bea_year_batch_size: int = Field(default=5, ge=1, le=20)
+    bea_default_backfill_start_year: int = Field(default=2000, ge=1929, le=2100)
     bls_enabled: bool = False
     bls_api_key: SecretStr | None = None
     bls_base_url: HttpUrl = HttpUrl("https://api.bls.gov/publicAPI/v2")
@@ -110,6 +119,10 @@ class Settings(BaseSettings):
             "fred_cache_enabled": self.fred_cache_enabled,
             "fred_cache_ttl_seconds": self.fred_cache_ttl_seconds,
             "bea_api_key": "***" if self.bea_api_key else None,
+            "bea_enabled": self.bea_enabled,
+            "bea_base_url": str(self.bea_base_url),
+            "bea_cache_enabled": self.bea_cache_enabled,
+            "bea_cache_ttl_seconds": self.bea_cache_ttl_seconds,
             "bls_enabled": self.bls_enabled,
             "bls_api_key": "***" if self.bls_api_key else None,
             "bls_base_url": str(self.bls_base_url),

@@ -14,7 +14,10 @@ from app.indicators.config import load_indicator_catalog
 from app.indicators.service import seed_indicator_catalog
 from app.main import create_app
 from app.settings import Settings
-from app.source_mappings.config import load_source_mapping_catalog
+from app.source_mappings.config import (
+    load_source_mapping_catalog,
+    load_source_mapping_catalog_for,
+)
 from app.source_mappings.repository import seed_source_mappings
 
 pytestmark = pytest.mark.integration
@@ -26,6 +29,7 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     with Session(postgres_engine) as session:
         seed_indicator_catalog(session, load_indicator_catalog())
         seed_source_mappings(session, load_source_mapping_catalog())
+        seed_source_mappings(session, load_source_mapping_catalog_for("bea"))
         session.execute(delete(RawObservation).where(RawObservation.indicator_id == "US_CPI"))
         session.add_all(
             [
@@ -59,6 +63,8 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         fred_api_key=SecretStr("offline-test-credential"),
         bls_api_key=SecretStr("offline-bls-test-credential"),
         bls_enabled=True,
+        bea_api_key=SecretStr("offline-bea-test-credential"),
+        bea_enabled=True,
     )
     with TestClient(create_app(settings)) as client:
         indicators = client.get("/api/v1/indicators", params={"limit": 10})
@@ -71,7 +77,12 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         )
         status = client.get("/api/v1/data-sources/fred/status")
         bls_status = client.get("/api/v1/data-sources/bls/status")
+        bea_status = client.get("/api/v1/data-sources/bea/status")
         mappings = client.get("/api/v1/source-mappings", params={"source": "bls", "limit": 5})
+        bea_mappings = client.get(
+            "/api/v1/source-mappings",
+            params={"source": "BEA", "enabled": True, "limit": 5},
+        )
         mapping = client.get("/api/v1/source-mappings/US_CPI")
 
     assert indicators.status_code == 200
@@ -86,7 +97,18 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert bls_status.status_code == 200
     assert bls_status.json()["api_key_configured"] is True
     assert "offline-bls-test-credential" not in bls_status.text
+    assert bea_status.status_code == 200
+    assert bea_status.json()["api_key_configured"] is True
+    assert bea_status.json()["pending_review_count"] == 0
+    assert bea_status.json()["usable_mapping_count"] == 5
+    assert "offline-bea-test-credential" not in bea_status.text
     assert mappings.status_code == 200
     assert len(mappings.json()) == 5
+    assert bea_mappings.status_code == 200
+    assert len(bea_mappings.json()) == 5
+    assert {item["mapping_status"] for item in bea_mappings.json()} == {
+        "valid",
+        "valid_with_warning",
+    }
     assert mapping.status_code == 200
     assert mapping.json()[0]["source_series_id"] == "CUSR0000SA0"

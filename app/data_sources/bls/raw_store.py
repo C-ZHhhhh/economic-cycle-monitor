@@ -1,26 +1,21 @@
-"""Immutable compressed archive for BLS batch responses."""
+"""Compatibility wrapper for shared official-source raw storage."""
 
-import gzip
-import hashlib
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
+
+from app.data_sources.official.storage import OfficialRawStore
 
 
 class BlsRawStore:
     """Archive raw JSON under source/date/hash paths without credentials."""
 
     def __init__(self, root: Path) -> None:
-        self.root = root
+        self._store = OfficialRawStore(root)
 
     def archive(self, *, body: bytes, retrieved_at: datetime) -> tuple[str, Path]:
-        digest = hashlib.sha256(body).hexdigest()
-        timestamp = retrieved_at.astimezone(UTC)
-        directory = self.root / timestamp.strftime("%Y-%m-%d") / "timeseries_data"
-        directory.mkdir(parents=True, exist_ok=True)
-        target = directory / f"{timestamp.strftime('%H%M%S%f')}-{digest[:12]}.json.gz"
-        if not target.exists():
-            temporary = directory / f".{target.name}.tmp"
-            with gzip.open(temporary, "wb") as handle:
-                handle.write(body)
-            temporary.replace(target)
-        return digest, target
+        """Archive a BLS time-series response."""
+        return self._store.archive(
+            body=body,
+            retrieved_at=retrieved_at,
+            endpoint="timeseries_data",
+        )

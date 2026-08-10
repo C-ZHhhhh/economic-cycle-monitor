@@ -84,6 +84,20 @@ class BlsSyncOptions(PipelineSelection):
     dry_run: bool = False
 
 
+class BeaBackfillOptions(PipelineSelection):
+    """Bounded BEA NIPA history request options expressed in source years."""
+
+    start_year: int = Field(ge=1929, le=2100)
+    end_year: int = Field(ge=1929, le=2100)
+    dry_run: bool = False
+
+
+class BeaSyncOptions(PipelineSelection):
+    """Incremental BEA synchronization options."""
+
+    dry_run: bool = False
+
+
 class SourceComparisonOptions(PipelineSelection):
     """Bounded source-to-source comparison options."""
 

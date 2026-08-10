@@ -17,10 +17,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from agents.macro.service import create_mock_run as create_mock_run_service
+from app.data_pipeline.bea_service import BeaPipelineService
 from app.data_pipeline.bls_service import BlsPipelineService
 from app.data_pipeline.repository import finish_sync_run, start_sync_run
 from app.data_pipeline.schemas import (
     BackfillOptions,
+    BeaBackfillOptions,
+    BeaSyncOptions,
     BlsBackfillOptions,
     BlsSyncOptions,
     PipelineSelection,
@@ -31,6 +34,7 @@ from app.data_pipeline.schemas import (
 from app.data_pipeline.service import FredPipelineService
 from app.data_pipeline.source_comparison import SourceComparisonService
 from app.data_quality.service import run_database_quality_checks
+from app.data_sources.bea.factory import create_bea_client
 from app.data_sources.bls.factory import create_bls_client
 from app.data_sources.fred.factory import create_fred_client
 from app.database.models import DataSourceRequest, IndicatorSourceMapping, SyncRun
@@ -40,7 +44,10 @@ from app.indicators.repository import get_indicator
 from app.indicators.repository import list_indicators as query_indicators
 from app.indicators.service import seed_indicator_catalog
 from app.settings import Settings
-from app.source_mappings.config import load_source_mapping_catalog
+from app.source_mappings.config import (
+    load_source_mapping_catalog,
+    load_source_mapping_catalog_for,
+)
 from app.source_mappings.repository import seed_source_mappings
 
 app = typer.Typer(
@@ -108,6 +115,13 @@ def _require_bls_enabled(settings: Settings) -> None:
         _fail("BLS is disabled; set BLS_ENABLED=true before making BLS API requests")
 
 
+def _require_bea_enabled(settings: Settings) -> None:
+    if not settings.bea_enabled:
+        _fail("BEA is disabled; set BEA_ENABLED=true before making BEA API requests")
+    if settings.bea_api_key is None:
+        _fail("BEA API key is not configured")
+
+
 @app.command("create-mock-run")
 def create_mock_run() -> None:
     """Create one validated mock run and report in PostgreSQL."""
@@ -147,7 +161,10 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
             catalog = load_indicator_catalog()
             run = start_sync_run(session, "seed_indicators", {}, len(catalog.indicators))
             result = seed_indicator_catalog(session, catalog)
-            mapping_result = seed_source_mappings(session, load_source_mapping_catalog())
+            bls_mapping_result = seed_source_mappings(session, load_source_mapping_catalog())
+            bea_mapping_result = seed_source_mappings(
+                session, load_source_mapping_catalog_for("bea")
+            )
             summary = SyncSummary(
                 run_id=run.run_id,
                 operation=run.operation,
@@ -155,13 +172,18 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
                 indicator_count=len(catalog.indicators),
                 success_count=len(catalog.indicators),
                 inserted_count=result.inserted,
-                results=[result.model_dump(), {"bls_mappings": mapping_result.model_dump()}],
+                results=[
+                    result.model_dump(),
+                    {"bls_mappings": bls_mapping_result.model_dump()},
+                    {"bea_mappings": bea_mapping_result.model_dump()},
+                ],
             )
             finish_sync_run(session, run, summary)
             payload = {
                 "run_id": run.run_id,
                 **result.model_dump(),
-                "bls_mappings": mapping_result.model_dump(),
+                "bls_mappings": bls_mapping_result.model_dump(),
+                "bea_mappings": bea_mapping_result.model_dump(),
             }
     except (SQLAlchemyError, OSError, RuntimeError, ValueError):
         _fail("Indicator catalog could not be synchronized")
@@ -434,6 +456,116 @@ async def _run_bls_sync(
         return await BlsPipelineService(session, settings, client).sync(options)
 
 
+async def _run_validate_bea(
+    session: Session,
+    settings: Settings,
+    options: tuple[PipelineSelection, bool],
+) -> SyncSummary:
+    selection, dry_run = options
+    async with create_bea_client(settings) as client:
+        summary = await BeaPipelineService(session, settings, client).validate_mappings(selection)
+    if dry_run:
+        session.rollback()
+    return summary
+
+
+@app.command("validate-bea-mappings")
+def validate_bea_mappings_command(
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate exact BEA mappings without auto-promoting pending candidates."""
+    settings = _load_settings()
+    _require_bea_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_validate_bea,
+        (
+            PipelineSelection(indicator_id=indicator, module=module, enabled_only=enabled_only),
+            dry_run,
+        ),
+        "BEA mapping validation failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.failure_count:
+        raise typer.Exit(code=1)
+
+
+async def _run_bea_backfill(
+    session: Session, settings: Settings, options: BeaBackfillOptions
+) -> SyncSummary:
+    async with create_bea_client(settings) as client:
+        return await BeaPipelineService(session, settings, client).backfill(options)
+
+
+@app.command("backfill-bea")
+def backfill_bea_command(
+    start_year: int = typer.Option(2000, min=1929, max=2100),
+    end_year: int = typer.Option(date.today().year, min=1929, max=2100),
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Backfill BEA NIPA history using small explicit year batches."""
+    settings = _load_settings()
+    _require_bea_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_bea_backfill,
+        BeaBackfillOptions(
+            indicator_id=indicator,
+            module=module,
+            enabled_only=enabled_only,
+            start_year=start_year,
+            end_year=end_year,
+            dry_run=dry_run,
+        ),
+        "BEA backfill failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.status == "failed":
+        raise typer.Exit(code=1)
+
+
+async def _run_bea_sync(
+    session: Session, settings: Settings, options: BeaSyncOptions
+) -> SyncSummary:
+    async with create_bea_client(settings) as client:
+        return await BeaPipelineService(session, settings, client).sync(options)
+
+
+@app.command("sync-bea")
+def sync_bea_command(
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Incrementally synchronize BEA data with configured revision lookbacks."""
+    settings = _load_settings()
+    _require_bea_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_bea_sync,
+        BeaSyncOptions(
+            indicator_id=indicator,
+            module=module,
+            enabled_only=enabled_only,
+            dry_run=dry_run,
+        ),
+        "BEA incremental synchronization failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.status == "failed":
+        raise typer.Exit(code=1)
+
+
 @app.command("sync-bls")
 def sync_bls_command(
     indicator: str | None = typer.Option(None),
@@ -472,11 +604,11 @@ def compare_sources_command(
     dry_run: bool = typer.Option(False),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Compare independently stored BLS and FRED observations in pages."""
+    """Compare independently stored official and FRED observations in pages."""
     primary_source = primary.lower()
     secondary_source = secondary.lower()
-    if (primary_source, secondary_source) != ("bls", "fred"):
-        _fail("Stage 2B-1 supports only --primary bls --secondary fred")
+    if primary_source not in {"bls", "bea"} or secondary_source != "fred":
+        _fail("Supported comparisons use --primary bls|bea --secondary fred")
     settings = _load_settings()
     engine = create_database_engine(settings.database_url)
     try:
@@ -504,6 +636,8 @@ PipelineOptions = (
     | SyncOptions
     | BlsBackfillOptions
     | BlsSyncOptions
+    | BeaBackfillOptions
+    | BeaSyncOptions
     | tuple[str, date]
     | tuple[PipelineSelection, bool]
 )
@@ -609,26 +743,26 @@ def show_source_status_command(
     source: str = typer.Argument("bls"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Show secret-free BLS configuration, mapping, and request status."""
+    """Show secret-free official-source configuration, mapping, and request status."""
     normalized = source.lower()
-    if normalized != "bls":
-        _fail("Stage 2B-1 source status supports only BLS")
+    if normalized not in {"bls", "bea"}:
+        _fail("Source status supports only BLS and BEA")
     settings = _load_settings()
     engine = create_database_engine(settings.database_url)
     try:
         with db_session(engine) as session:
-            mappings = session.query(IndicatorSourceMapping).filter_by(source="bls").all()
+            mappings = session.query(IndicatorSourceMapping).filter_by(source=normalized).all()
             latest = (
                 session.query(DataSourceRequest)
-                .filter_by(source="bls")
+                .filter_by(source=normalized)
                 .order_by(DataSourceRequest.finished_at.desc())
                 .first()
             )
             payload = {
-                "source": "bls",
-                "enabled": settings.bls_enabled,
-                "api_key_configured": settings.bls_api_key is not None,
-                "base_url": str(settings.bls_base_url),
+                "source": normalized,
+                "enabled": getattr(settings, f"{normalized}_enabled"),
+                "api_key_configured": getattr(settings, f"{normalized}_api_key") is not None,
+                "base_url": str(getattr(settings, f"{normalized}_base_url")),
                 "mapping_count": len(mappings),
                 "mapping_status_counts": {
                     status: sum(item.mapping_status == status for item in mappings)
@@ -647,7 +781,7 @@ def show_source_status_command(
                 ),
             }
     except (SQLAlchemyError, OSError):
-        _fail("BLS source status could not be loaded")
+        _fail("Official-source status could not be loaded")
     finally:
         engine.dispose()
     _render(payload, json_output)
@@ -677,6 +811,19 @@ def clear_bls_cache_command() -> None:
     if target.exists():
         shutil.rmtree(target)
     typer.echo("OK: BLS cache is clear")
+
+
+@app.command("clear-bea-cache")
+def clear_bea_cache_command() -> None:
+    """Remove only the configured BEA cache directory."""
+    settings = _load_settings()
+    target = (settings.cache_dir / "bea").resolve()
+    cache_root = settings.cache_dir.resolve()
+    if target.parent != cache_root:
+        _fail("Configured BEA cache path is unsafe")
+    if target.exists():
+        shutil.rmtree(target)
+    typer.echo("OK: BEA cache is clear")
 
 
 if __name__ == "__main__":

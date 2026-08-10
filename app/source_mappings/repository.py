@@ -17,6 +17,7 @@ from app.source_mappings.schemas import (
 def _configured_values(definition: SourceMappingDefinition) -> dict[str, object]:
     return {
         "source_dataset": definition.source_dataset,
+        "source_parameters_json": definition.source_parameters,
         "source_name": definition.official_name,
         "source_unit": definition.source_unit,
         "source_frequency": definition.expected_frequency,

@@ -29,7 +29,17 @@ def test_safe_summary_redacts_every_key(monkeypatch: pytest.MonkeyPatch) -> None
     assert all(value not in rendered for value in secrets.values())
     assert summary["deepseek_api_key"] == "***"
     assert summary["bls_api_key"] == "***"
+    assert summary["bea_api_key"] == "***"
     assert "database_url" not in summary
+
+
+def test_bea_defaults_are_offline_and_resource_bounded() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.bea_enabled is False
+    assert settings.bea_api_key is None
+    assert settings.bea_year_batch_size == 5
+    assert settings.bea_cache_enabled is True
 
 
 def test_live_llm_requires_model_and_key() -> None:

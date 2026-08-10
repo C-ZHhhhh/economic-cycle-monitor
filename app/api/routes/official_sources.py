@@ -20,6 +20,7 @@ def _mapping_payload(item: Any) -> dict[str, Any]:
         "source": item.source,
         "source_series_id": item.source_series_id,
         "source_dataset": item.source_dataset,
+        "source_parameters": item.source_parameters_json,
         "source_name": item.source_name,
         "source_unit": item.source_unit,
         "source_frequency": item.source_frequency,
@@ -80,6 +81,8 @@ def _comparison_payload(item: Any) -> dict[str, Any]:
         "secondary_source": item.secondary_source,
         "primary_value": item.primary_value,
         "secondary_value": item.secondary_value,
+        "normalized_primary_value": item.normalized_primary_value,
+        "normalized_secondary_value": item.normalized_secondary_value,
         "absolute_difference": item.absolute_difference,
         "relative_difference": item.relative_difference,
         "tolerance": item.tolerance,
@@ -93,6 +96,8 @@ def _comparison_payload(item: Any) -> dict[str, Any]:
 def source_comparisons(
     session: SessionDependency,
     status: str | None = None,
+    primary_source: str | None = None,
+    secondary_source: str | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> list[dict[str, Any]]:
@@ -100,7 +105,12 @@ def source_comparisons(
     return [
         _comparison_payload(item)
         for item in list_source_comparisons(
-            session, comparison_status=status, offset=offset, limit=limit
+            session,
+            comparison_status=status,
+            primary_source=primary_source.lower() if primary_source else None,
+            secondary_source=secondary_source.lower() if secondary_source else None,
+            offset=offset,
+            limit=limit,
         )
     ]
 
@@ -110,6 +120,8 @@ def source_comparison_detail(
     indicator_id: str,
     session: SessionDependency,
     status: str | None = None,
+    primary_source: str | None = None,
+    secondary_source: str | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> list[dict[str, Any]]:
@@ -120,6 +132,8 @@ def source_comparison_detail(
             session,
             indicator_id=indicator_id,
             comparison_status=status,
+            primary_source=primary_source.lower() if primary_source else None,
+            secondary_source=secondary_source.lower() if secondary_source else None,
             offset=offset,
             limit=limit,
         )

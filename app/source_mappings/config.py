@@ -7,6 +7,11 @@ import yaml
 from app.source_mappings.schemas import SourceMappingCatalog, SourceMappingDefinition
 
 DEFAULT_BLS_MAPPING_PATH = Path("config/data_sources/bls.yaml")
+DEFAULT_BEA_MAPPING_PATH = Path("config/data_sources/bea.yaml")
+SOURCE_MAPPING_PATHS = {
+    "bea": DEFAULT_BEA_MAPPING_PATH,
+    "bls": DEFAULT_BLS_MAPPING_PATH,
+}
 
 
 def load_source_mapping_catalog(path: Path = DEFAULT_BLS_MAPPING_PATH) -> SourceMappingCatalog:
@@ -22,3 +27,13 @@ def load_source_mapping_catalog(path: Path = DEFAULT_BLS_MAPPING_PATH) -> Source
         mappings=mappings,
         source_path=path,
     )
+
+
+def load_source_mapping_catalog_for(source: str) -> SourceMappingCatalog:
+    """Load the configured catalog for a supported official source."""
+    normalized = source.lower()
+    try:
+        path = SOURCE_MAPPING_PATHS[normalized]
+    except KeyError as error:
+        raise ValueError(f"Unsupported official source {source!r}") from error
+    return load_source_mapping_catalog(path)
