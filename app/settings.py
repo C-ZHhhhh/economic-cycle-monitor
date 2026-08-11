@@ -71,7 +71,16 @@ class Settings(BaseSettings):
     bls_unregistered_max_series: int = Field(default=25, ge=1, le=25)
     bls_unregistered_max_years: int = Field(default=10, ge=1, le=10)
     bls_default_backfill_start_year: int = Field(default=2000, ge=1913, le=2100)
+    census_enabled: bool = False
     census_api_key: SecretStr | None = None
+    census_base_url: HttpUrl = HttpUrl("https://api.census.gov/data")
+    census_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    census_max_retries: int = Field(default=3, ge=0, le=8)
+    census_retry_base_seconds: float = Field(default=1.0, ge=0, le=30)
+    census_cache_enabled: bool = True
+    census_cache_ttl_seconds: int = Field(default=3600, ge=0)
+    census_year_batch_size: int = Field(default=5, ge=1, le=20)
+    census_default_backfill_start_year: int = Field(default=2000, ge=1959, le=2100)
 
     fetch_concurrency: int = Field(default=4, ge=1, le=16)
     per_source_fetch_concurrency: int = Field(default=2, ge=1, le=8)
@@ -129,6 +138,10 @@ class Settings(BaseSettings):
             "bls_cache_enabled": self.bls_cache_enabled,
             "bls_cache_ttl_seconds": self.bls_cache_ttl_seconds,
             "census_api_key": "***" if self.census_api_key else None,
+            "census_enabled": self.census_enabled,
+            "census_base_url": str(self.census_base_url),
+            "census_cache_enabled": self.census_cache_enabled,
+            "census_cache_ttl_seconds": self.census_cache_ttl_seconds,
             "fetch_concurrency": self.fetch_concurrency,
             "per_source_fetch_concurrency": self.per_source_fetch_concurrency,
             "analysis_concurrency": self.analysis_concurrency,

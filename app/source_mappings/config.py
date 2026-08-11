@@ -8,9 +8,11 @@ from app.source_mappings.schemas import SourceMappingCatalog, SourceMappingDefin
 
 DEFAULT_BLS_MAPPING_PATH = Path("config/data_sources/bls.yaml")
 DEFAULT_BEA_MAPPING_PATH = Path("config/data_sources/bea.yaml")
+DEFAULT_CENSUS_MAPPING_PATH = Path("config/data_sources/census.yaml")
 SOURCE_MAPPING_PATHS = {
     "bea": DEFAULT_BEA_MAPPING_PATH,
     "bls": DEFAULT_BLS_MAPPING_PATH,
+    "census": DEFAULT_CENSUS_MAPPING_PATH,
 }
 
 

@@ -2,7 +2,7 @@
 
 from collections import Counter
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from sqlalchemy import Select, func, select
@@ -20,6 +20,7 @@ from app.database.models import (
 )
 from app.indicators.repository import get_indicator
 from app.source_mappings.config import load_source_mapping_catalog_for
+from app.source_mappings.policy import source_mapping_is_direct
 from app.source_mappings.repository import list_source_mappings, seed_source_mappings
 from app.source_mappings.schemas import SourceMappingDefinition
 
@@ -108,7 +109,10 @@ class SourceComparisonService:
         return summary
 
     def _select_mappings(self, options: SourceComparisonOptions) -> list[IndicatorSourceMapping]:
-        if options.primary_source not in {"bls", "bea"} or options.secondary_source != "fred":
+        if (
+            options.primary_source not in {"bls", "bea", "census"}
+            or options.secondary_source != "fred"
+        ):
             return []
         mappings = list_source_mappings(
             self.session,
@@ -117,11 +121,18 @@ class SourceComparisonService:
             enabled=True if options.enabled_only else None,
             limit=100,
         )
-        if options.module is None:
-            return list(mappings)
-        return [
+        selected = [
             item
             for item in mappings
+            if item.mapping_status in {"valid", "valid_with_warning"}
+            and (definition := self.definitions.get(item.indicator_id)) is not None
+            and source_mapping_is_direct(definition.source_parameters)
+        ]
+        if options.module is None:
+            return selected
+        return [
+            item
+            for item in selected
             if (indicator := get_indicator(self.session, item.indicator_id)) is not None
             and indicator.module == options.module
         ]
@@ -189,6 +200,19 @@ class SourceComparisonService:
                 severity="error",
                 source=options.primary_source,
                 message="Source comparison blocked by incompatible seasonal adjustment",
+            )
+        elif (
+            options.primary_source == "census"
+            and primary is not None
+            and not self._census_identity_is_auditable(primary, definition)
+        ):
+            status = "normalization_mismatch"
+            issue = official_source_issue(
+                indicator.indicator_id,
+                event_type=status,
+                severity="error",
+                source=options.primary_source,
+                message="Census comparison lacks exact identity, scale, or precision evidence",
             )
         elif mapping.normalization_rule not in {"identity", "bea_unit_multiplier"}:
             status = "not_comparable"
@@ -308,6 +332,39 @@ class SourceComparisonService:
             },
         )
         return result, issue
+
+    @staticmethod
+    def _census_identity_is_auditable(
+        observation: RawObservation, definition: SourceMappingDefinition
+    ) -> bool:
+        """Require exact Census dimensions and raw Decimal evidence before comparison."""
+        details = observation.source_details_json
+        identity = details.get("source_identity")
+        parameters = definition.source_parameters
+        if not isinstance(identity, dict):
+            return False
+        expected = {
+            "dataset": parameters.get("dataset"),
+            "program": parameters.get("program"),
+            "category_code": parameters.get("category_code"),
+            "data_type_code": parameters.get("data_type_code"),
+            "seasonally_adj": parameters.get("seasonally_adj"),
+            "geo_level_code": parameters.get("geo_level_code"),
+            "geography": parameters.get("geography"),
+        }
+        if any(value is None or identity.get(key) != value for key, value in expected.items()):
+            return False
+        if details.get("scale") != parameters.get("scale"):
+            return False
+        if details.get("source_unit_code") != parameters.get("source_unit_code"):
+            return False
+        raw = details.get("raw_cell_value")
+        if not isinstance(raw, str):
+            return False
+        try:
+            return Decimal(raw.replace(",", "")) == Decimal(observation.value)
+        except InvalidOperation:
+            return False
 
     @staticmethod
     def _bea_normalization_is_auditable(observation: RawObservation) -> bool:

@@ -2,10 +2,11 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from agents.macro.schemas import MacroCycleResult
@@ -83,9 +84,20 @@ def test_every_stage_two_command_has_help() -> None:
         "backfill-bea",
         "sync-bea",
         "clear-bea-cache",
+        "validate-census-mappings",
+        "backfill-census",
+        "sync-census",
+        "clear-census-cache",
     ]
 
     for command in commands:
         result = runner.invoke(cli.app, [command, "--help"])
         assert result.exit_code == 0, command
         assert "Usage:" in result.stdout
+
+
+def test_census_backfill_month_parser_is_exact() -> None:
+    assert cli._parse_month("2000-01", "--start") == date(2000, 1, 1)
+
+    with pytest.raises(typer.BadParameter, match="YYYY-MM"):
+        cli._parse_month("2000-01-15", "--start")

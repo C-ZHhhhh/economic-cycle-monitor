@@ -181,3 +181,57 @@ def bea_status(request: Request, session: SessionDependency) -> dict[str, Any]:
         "latest_success": _request_summary(latest_success),
         "latest_failure": _request_summary(latest_failure),
     }
+
+
+@router.get("/census/status")
+def census_status(request: Request, session: SessionDependency) -> dict[str, Any]:
+    """Report Census configuration and candidate roles without exposing the API key."""
+    latest_success = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == "census", DataSourceRequest.success.is_(True))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    latest_failure = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == "census", DataSourceRequest.success.is_(False))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    rows = session.scalars(
+        select(IndicatorSourceMapping).where(
+            IndicatorSourceMapping.source == "census",
+            IndicatorSourceMapping.enabled.is_(True),
+        )
+    ).all()
+    direct = [
+        item
+        for item in rows
+        if item.source_parameters_json.get("mapping_type", "DIRECT") == "DIRECT"
+    ]
+    supporting = [
+        item
+        for item in rows
+        if item.source_parameters_json.get("mapping_type") == "SUPPORTING_COMPONENT"
+    ]
+    usable_direct = [
+        item for item in direct if item.mapping_status in {"valid", "valid_with_warning"}
+    ]
+    settings = request.app.state.settings
+    return {
+        "enabled": settings.census_enabled,
+        "configured": settings.census_api_key is not None,
+        "api_key_configured": settings.census_api_key is not None,
+        "base_url": str(settings.census_base_url),
+        "cache": {
+            "enabled": settings.census_cache_enabled,
+            "ttl_seconds": settings.census_cache_ttl_seconds,
+        },
+        "registered_mapping_count": len(rows),
+        "direct_mapping_count": len(direct),
+        "usable_direct_mapping_count": len(usable_direct),
+        "supporting_component_count": len(supporting),
+        "pending_review_count": sum(item.mapping_status == "pending_review" for item in rows),
+        "latest_success": _request_summary(latest_success),
+        "latest_failure": _request_summary(latest_failure),
+    }
