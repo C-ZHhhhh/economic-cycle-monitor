@@ -25,6 +25,7 @@ class CensusMappingIdentity(BaseModel):
     geo_level_code: str | None = None
     geography_query: str
     identity_fields: list[str] = Field(default_factory=list)
+    request_year_batch_size: int = Field(default=5, ge=1, le=20)
     first_available_period: str
     source_unit_code: str
     scale: int
@@ -92,7 +93,9 @@ class CensusPayload(BaseModel):
 class CensusMetadataValidation(BaseModel):
     """Live identity evidence that never promotes a pending mapping automatically."""
 
-    status: Literal["pending_review", "invalid", "unavailable"] = "pending_review"
+    status: Literal["pending_review", "valid", "valid_with_warning", "invalid", "unavailable"] = (
+        "pending_review"
+    )
     identity_confirmed: bool = False
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

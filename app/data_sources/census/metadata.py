@@ -70,8 +70,13 @@ def validate_census_metadata(
     elif identity.geo_level_code not in result.returned_geography_values:
         result.errors.append("unexpected_geography: configured wire value was not returned")
     result.identity_confirmed = not result.errors
-    result.status = "pending_review" if not result.errors else "invalid"
-    if result.identity_confirmed:
+    if result.errors:
+        result.status = "invalid"
+    elif definition.mapping_status in {"valid", "valid_with_warning"}:
+        result.status = definition.mapping_status
+    else:
+        result.status = "pending_review"
+    if result.identity_confirmed and result.status == "pending_review":
         result.warnings.append(
             "Candidate identity passed offline/runtime checks but remains pending until V10 review"
         )

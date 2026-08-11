@@ -82,28 +82,28 @@ def test_bea_reviewed_mapping_seed_is_usable_and_becomes_primary(
     assert get_active_source_mapping(postgres_session, "US_REAL_GDP", "bea") is not None
 
 
-def test_census_pending_and_supporting_mappings_cannot_become_primary(
+def test_census_reviewed_direct_and_supporting_primary_policy(
     postgres_session: Session,
 ) -> None:
     seed_indicator_catalog(postgres_session, load_indicator_catalog())
     catalog = load_source_mapping_catalog_for("census")
     result = seed_source_mappings(postgres_session, catalog)
 
-    assert result.inserted + result.unchanged == 7
+    assert result.inserted + result.updated + result.unchanged == 7
     rows = postgres_session.scalars(
         select(IndicatorSourceMapping).where(IndicatorSourceMapping.source == "census")
     ).all()
     assert len(rows) == 7
-    assert {item.mapping_status for item in rows} == {"pending_review"}
-    retail = next(item for item in rows if item.indicator_id == "US_REAL_RETAIL_SALES")
-    retail.mapping_status = "valid"
-    retail.metadata_checked_at = datetime.now(UTC)
-    postgres_session.flush()
+    assert {item.mapping_status for item in rows} == {"valid"}
 
-    indicator = get_indicator(postgres_session, "US_REAL_RETAIL_SALES")
-    assert indicator is not None
-    assert indicator.primary_source == "fred"
+    retail_indicator = get_indicator(postgres_session, "US_REAL_RETAIL_SALES")
+    starts_indicator = get_indicator(postgres_session, "US_HOUSING_STARTS")
+    assert retail_indicator is not None
+    assert starts_indicator is not None
+    assert retail_indicator.primary_source == "fred"
+    assert starts_indicator.primary_source == "census"
     assert get_active_source_mapping(postgres_session, "US_REAL_RETAIL_SALES", "census") is None
+    assert get_active_source_mapping(postgres_session, "US_HOUSING_STARTS", "census") is not None
 
 
 def test_reviewed_census_direct_mapping_is_primary_eligible(

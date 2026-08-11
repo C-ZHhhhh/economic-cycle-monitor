@@ -141,7 +141,7 @@ class CensusPipelineService:
                 validation = validate_census_metadata(
                     definition, dataset_metadata, variables_metadata, rows
                 )
-                mapping.mapping_status = "pending_review"
+                mapping.mapping_status = validation.status
                 mapping.mapping_warnings_json = [*validation.errors, *validation.warnings]
                 mapping.metadata_checked_at = datetime.now(UTC)
                 mapping_type = source_mapping_type(definition.source_parameters)
@@ -149,7 +149,7 @@ class CensusPipelineService:
                     {
                         "indicator_id": indicator.indicator_id,
                         "mapping_type": mapping_type,
-                        "status": "pending_review",
+                        "status": validation.status,
                         "identity_confirmed": validation.identity_confirmed,
                         "returned_seasonal_values": validation.returned_seasonal_values,
                         "returned_geography_values": validation.returned_geography_values,
@@ -191,13 +191,11 @@ class CensusPipelineService:
         if options.start > options.end:
             raise ValueError("start must not be after end")
         selected = self._select(options, direct_only=True, usable_only=True)
-        windows = split_census_years(
-            options.start.year, options.end.year, self.settings.census_year_batch_size
-        )
         return await self._fetch_windows(
             "backfill_census",
             selected,
-            windows,
+            options.start.year,
+            options.end.year,
             options.dry_run,
             lower_bound=options.start,
             upper_bound=options.end,
@@ -231,7 +229,7 @@ class CensusPipelineService:
         failures: set[str] = set()
         for group in groups.values():
             start = min(starts[item[0].indicator_id] for item in group)
-            windows = split_census_years(start, current_year, self.settings.census_year_batch_size)
+            windows = split_census_years(start, current_year, self._request_year_batch_size(group))
             await self._process_group(
                 run.run_id,
                 summary,
@@ -250,28 +248,34 @@ class CensusPipelineService:
         self,
         operation: str,
         selected: Sequence[SelectedMapping],
-        windows: list[tuple[int, int]],
+        start_year: int,
+        end_year: int,
         dry_run: bool,
         *,
         lower_bound: date | None = None,
         upper_bound: date | None = None,
     ) -> SyncSummary:
+        groups = self._group_by_dataset(selected)
+        dataset_windows = {
+            dataset: split_census_years(start_year, end_year, self._request_year_batch_size(group))
+            for dataset, group in groups.items()
+        }
         run = start_sync_run(
             self.session,
             operation,
-            {"year_windows": windows, "dry_run": dry_run},
+            {"dataset_year_windows": dataset_windows, "dry_run": dry_run},
             len(selected),
         )
         summary = self._summary(run.run_id, operation, len(selected))
         totals: dict[str, dict[str, int]] = defaultdict(self._empty_counts)
         successes: set[str] = set()
         failures: set[str] = set()
-        for group in self._group_by_dataset(selected).values():
+        for dataset, group in groups.items():
             await self._process_group(
                 run.run_id,
                 summary,
                 group,
-                windows,
+                dataset_windows[dataset],
                 dry_run,
                 totals,
                 successes,
@@ -462,6 +466,14 @@ class CensusPipelineService:
         for item in selected:
             groups[item[2].source_dataset].append(item)
         return groups
+
+    @staticmethod
+    def _request_year_batch_size(group: Sequence[SelectedMapping]) -> int:
+        """Use the smallest reviewed response window configured for a shared dataset."""
+        return min(
+            CensusMappingIdentity.model_validate(item[2].source_parameters).request_year_batch_size
+            for item in group
+        )
 
     @staticmethod
     def _event_type(message: str) -> str:

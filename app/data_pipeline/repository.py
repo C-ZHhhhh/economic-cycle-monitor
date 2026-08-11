@@ -363,6 +363,11 @@ def persist_official_observations(
             continue
         if Decimal(existing.value) == item.value:
             result.unchanged += 1
+            if not dry_run:
+                existing.retrieved_at = retrieved_at
+                existing.raw_payload_hash = payload_hash
+                existing.source_vintage_date = retrieved_at.date()
+                existing.source_details_json = details
             continue
         result.revised += 1
         if dry_run:

@@ -114,8 +114,8 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert census_status.json()["api_key_configured"] is True
     assert census_status.json()["direct_mapping_count"] == 6
     assert census_status.json()["supporting_component_count"] == 1
-    assert census_status.json()["pending_review_count"] == 7
-    assert census_status.json()["usable_direct_mapping_count"] == 0
+    assert census_status.json()["pending_review_count"] == 0
+    assert census_status.json()["usable_direct_mapping_count"] == 6
     assert "offline-census-test-credential" not in census_status.text
     assert mappings.status_code == 200
     assert len(mappings.json()) == 5
@@ -127,7 +127,7 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     }
     assert census_mappings.status_code == 200
     assert len(census_mappings.json()) == 7
-    assert {item["mapping_status"] for item in census_mappings.json()} == {"pending_review"}
+    assert {item["mapping_status"] for item in census_mappings.json()} == {"valid"}
     assert {item["mapping_type"] for item in census_mappings.json()} == {
         "DIRECT",
         "SUPPORTING_COMPONENT",

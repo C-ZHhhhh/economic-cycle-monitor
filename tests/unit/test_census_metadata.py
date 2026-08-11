@@ -6,11 +6,23 @@ from app.source_mappings.config import load_source_mapping_catalog_for
 from app.source_mappings.schemas import SourceMappingDefinition
 
 
-def _definition() -> SourceMappingDefinition:
-    return next(
+def _definition(*, pending: bool = False) -> SourceMappingDefinition:
+    definition = next(
         item
         for item in load_source_mapping_catalog_for("census").mappings
         if item.indicator_id == "US_HOUSING_STARTS"
+    )
+    if not pending:
+        return definition
+    return definition.model_copy(
+        update={
+            "mapping_status": "pending_review",
+            "source_parameters": {
+                **definition.source_parameters,
+                "seasonally_adj": None,
+                "geo_level_code": None,
+            },
+        }
     )
 
 
@@ -47,7 +59,7 @@ def _variables() -> dict[str, object]:
 
 def test_exact_candidate_stays_pending_and_reports_wire_values() -> None:
     result = validate_census_metadata(
-        _definition(), {"dataset": "resconst"}, _variables(), [_row()]
+        _definition(pending=True), {"dataset": "resconst"}, _variables(), [_row()]
     )
 
     assert result.status == "pending_review"
@@ -55,6 +67,16 @@ def test_exact_candidate_stays_pending_and_reports_wire_values() -> None:
     assert result.returned_seasonal_values == ["yes"]
     assert result.returned_geography_values == ["US"]
     assert any("pending explicit live review" in item for item in result.warnings)
+
+
+def test_reviewed_identity_remains_valid_after_revalidation() -> None:
+    result = validate_census_metadata(
+        _definition(), {"dataset": "resconst"}, _variables(), [_row()]
+    )
+
+    assert result.status == "valid"
+    assert result.identity_confirmed
+    assert not any("pending" in item.lower() for item in result.warnings)
 
 
 def test_category_match_with_wrong_data_type_is_invalid() -> None:

@@ -1,25 +1,28 @@
 # Stage 2B-3 Census candidate mappings
 
-All mappings in this document and `config/data_sources/census.yaml` remain
-`pending_review` until the explicit Census Live Gate verifies V1-V10. The
-internal `source_series_id` values are stable repository keys, not Census-issued
-series identifiers. Census identity is the complete set of official dimensions
-stored in `source_parameters_json` and observation audit details.
+The explicit Census Live Gate completed on 2026-08-11. All seven identities in
+this document and `config/data_sources/census.yaml` are now reviewed `valid`
+mappings. The internal `source_series_id` values are stable repository keys, not
+Census-issued series identifiers. Census identity is the complete set of
+official dimensions stored in `source_parameters_json` and observation audit
+details.
 
-| Indicator | Dataset | Category | Data type | Role |
-| --- | --- | --- | --- | --- |
-| US_REAL_RETAIL_SALES | marts | 44X72 | SM | SUPPORTING_COMPONENT |
-| US_DURABLE_GOODS_ORDERS | m3 | MDM | NO | DIRECT |
-| US_CORE_CAPITAL_GOODS_ORDERS | m3 | NXA | NO | DIRECT |
-| US_HOUSING_STARTS | resconst | ASTARTS | TOTAL | DIRECT |
-| US_BUILDING_PERMITS | resconst | APERMITS | TOTAL | DIRECT |
-| US_BUSINESS_INVENTORIES | mtis | TOTBUS | IM | DIRECT |
-| US_INVENTORY_SALES_RATIO | mtis | TOTBUS | IR | DIRECT |
+| Indicator | Dataset | Category | Data type | Seasonal | Geography | Unit/scale | Role | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| US_REAL_RETAIL_SALES | marts | 44X72 | SM | yes | US | MLN$ / 1,000,000 | SUPPORTING_COMPONENT | valid |
+| US_DURABLE_GOODS_ORDERS | m3 | MDM | NO | yes | US | MLN$ / 1,000,000 | DIRECT | valid |
+| US_CORE_CAPITAL_GOODS_ORDERS | m3 | NXA | NO | yes | US | MLN$ / 1,000,000 | DIRECT | valid |
+| US_HOUSING_STARTS | resconst | ASTARTS | TOTAL | yes | US | K / 1,000 | DIRECT | valid |
+| US_BUILDING_PERMITS | resconst | APERMITS | TOTAL | yes | US | K / 1,000 | DIRECT | valid |
+| US_BUSINESS_INVENTORIES | mtis | TOTBUS | IM | yes | US | MLN$ / 1,000,000 | DIRECT | valid |
+| US_INVENTORY_SALES_RATIO | mtis | TOTBUS | IR | yes | US | ratio / 1 | DIRECT | valid |
 
-The candidate semantics require seasonally adjusted U.S. national data. The
-exact `seasonally_adj` and `geo_level_code` wire values are intentionally null
-until a real response is reviewed. A pending mapping is not eligible for
-backfill, synchronization, primary-source selection, or source comparison.
+Live responses confirmed `seasonally_adj=yes`, `geo_level_code=US`, monthly
+frequency, U.S. national geography, the documented units and scales, and exact
+agreement with the corresponding FRED observations from 2000-01 through each
+dataset's latest valid month. `program_code` is included in the source identity
+hash. M3 uses one-year request windows to keep response size bounded; the other
+datasets use five-year windows.
 
 ## Real retail sales boundary
 
@@ -30,10 +33,11 @@ observations for `US_REAL_RETAIL_SALES`, become its primary source, enter the si
 DIRECT counters, or compare nominal Census values with FRED RRSFS. No derivation
 recipe is implemented in Stage 2B-3.
 
-## Live Gate
+## Live Gate evidence
 
-The first authorized live test should use `US_HOUSING_STARTS`. Live validation
-must confirm dataset, endpoint, category, data type, monthly frequency,
-seasonality, unit and scale, economic meaning, U.S. geography, historical
-coverage, and a small Census/FRED value comparison before any mapping status is
-changed. Codes are never substituted automatically.
+The gate began with `US_HOUSING_STARTS` and then independently validated the
+other five DIRECT identities. The final stored Census/FRED comparison covered
+1,906 observations: 1,906 exact matches, zero rounding matches, zero missing
+dates, zero source conflicts, and zero normalization or seasonal-adjustment
+mismatches. Repeating the complete backfill inserted zero observations. No code
+or adjacent category was substituted automatically.

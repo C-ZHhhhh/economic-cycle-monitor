@@ -98,7 +98,10 @@ async def test_m3_request_is_shared_idempotent_and_source_isolated(
         return httpx.Response(200, json=_table({"MDM": "321000", "NXA": "80000"}))
 
     options = CensusBackfillOptions(
-        module="business_activity", start=date(2025, 1, 1), end=date(2025, 1, 1)
+        module="business_activity",
+        dataset="m3",
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
     )
     async with _client(tmp_path, httpx.MockTransport(handler)) as client:
         service = CensusPipelineService(postgres_session, settings, client)
@@ -107,6 +110,15 @@ async def test_m3_request_is_shared_idempotent_and_source_isolated(
             {"US_DURABLE_GOODS_ORDERS", "US_CORE_CAPITAL_GOODS_ORDERS"},
         )
         first = await service.backfill(options)
+        stored = postgres_session.scalar(
+            select(RawObservation).where(
+                RawObservation.indicator_id == "US_DURABLE_GOODS_ORDERS",
+                RawObservation.source == "census",
+            )
+        )
+        assert stored is not None
+        stored.source_details_json = {"stale": True}
+        postgres_session.flush()
         second = await service.backfill(options)
 
     assert requests == 2
@@ -121,6 +133,7 @@ async def test_m3_request_is_shared_idempotent_and_source_isolated(
     census = next(item for item in rows if item.source == "census")
     assert census.source_details_json["raw_cell_value"] == "321000"
     assert census.source_details_json["source_identity"]["category_code"] == "MDM"
+    assert census.source_details_json["source_identity"]["program_code"] == "M3"
     assert len(census.source_details_json["source_identity_hash"]) == 64
 
 
@@ -163,7 +176,18 @@ async def test_same_source_value_change_creates_census_revision(
     postgres_session: Session, settings: Settings, tmp_path: Path
 ) -> None:
     seed_indicator_catalog(postgres_session, load_indicator_catalog())
-    values = iter(["321000", "321001"])
+    postgres_session.add(
+        RawObservation(
+            indicator_id="US_DURABLE_GOODS_ORDERS",
+            observation_date=date(2025, 1, 1),
+            value=Decimal("999"),
+            source="fred",
+            retrieved_at=datetime.now(UTC),
+            raw_payload_hash="f" * 64,
+        )
+    )
+    postgres_session.flush()
+    values = iter(["100", "101"])
 
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_table({"MDM": next(values)}))
@@ -187,6 +211,22 @@ async def test_same_source_value_change_creates_census_revision(
         )
     )
     assert vintage is not None
-    assert vintage.previous_value == Decimal("321000.0000000000")
-    assert vintage.current_value == Decimal("321001.0000000000")
+    assert vintage.previous_value == Decimal("100.0000000000")
+    assert vintage.current_value == Decimal("101.0000000000")
     assert vintage.revision_number == 1
+    current = postgres_session.scalar(
+        select(RawObservation).where(
+            RawObservation.indicator_id == "US_DURABLE_GOODS_ORDERS",
+            RawObservation.observation_date == date(2025, 1, 1),
+            RawObservation.source == "census",
+        )
+    )
+    fred = postgres_session.scalar(
+        select(RawObservation).where(
+            RawObservation.indicator_id == "US_DURABLE_GOODS_ORDERS",
+            RawObservation.observation_date == date(2025, 1, 1),
+            RawObservation.source == "fred",
+        )
+    )
+    assert current is not None and current.value == Decimal("101.0000000000")
+    assert fred is not None and fred.value == Decimal("999.0000000000")
