@@ -18,8 +18,8 @@ def _observation(observation_date: str, value: str) -> FredObservation:
 
 
 def test_all_stage_two_and_official_source_quality_rules_are_registered() -> None:
-    assert len(QUALITY_RULES) == 31
-    assert len(set(QUALITY_RULES)) == 31
+    assert len(QUALITY_RULES) == 38
+    assert len(set(QUALITY_RULES)) == 38
     assert {
         "missing_value",
         "duplicate_observation",
@@ -52,6 +52,13 @@ def test_all_stage_two_and_official_source_quality_rules_are_registered() -> Non
         "invalid_unit_multiplier",
         "unexpected_table_line",
         "unexpected_series_code",
+        "unexpected_dataset",
+        "unexpected_category",
+        "unexpected_data_type",
+        "unexpected_geography",
+        "unexpected_seasonal_adjustment",
+        "unexpected_unit",
+        "derived_series_not_directly_comparable",
     } == set(QUALITY_RULES)
 
 

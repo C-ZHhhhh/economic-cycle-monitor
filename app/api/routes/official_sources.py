@@ -15,12 +15,14 @@ SessionDependency = Annotated[Session, Depends(get_request_session)]
 
 
 def _mapping_payload(item: Any) -> dict[str, Any]:
+    mapping_type = item.source_parameters_json.get("mapping_type", "DIRECT")
     return {
         "indicator_id": item.indicator_id,
         "source": item.source,
         "source_series_id": item.source_series_id,
         "source_dataset": item.source_dataset,
         "source_parameters": item.source_parameters_json,
+        "mapping_type": mapping_type,
         "source_name": item.source_name,
         "source_unit": item.source_unit,
         "source_frequency": item.source_frequency,

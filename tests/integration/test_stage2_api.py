@@ -30,6 +30,7 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         seed_indicator_catalog(session, load_indicator_catalog())
         seed_source_mappings(session, load_source_mapping_catalog())
         seed_source_mappings(session, load_source_mapping_catalog_for("bea"))
+        seed_source_mappings(session, load_source_mapping_catalog_for("census"))
         session.execute(delete(RawObservation).where(RawObservation.indicator_id == "US_CPI"))
         session.add_all(
             [
@@ -65,6 +66,8 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         bls_enabled=True,
         bea_api_key=SecretStr("offline-bea-test-credential"),
         bea_enabled=True,
+        census_api_key=SecretStr("offline-census-test-credential"),
+        census_enabled=True,
     )
     with TestClient(create_app(settings)) as client:
         indicators = client.get("/api/v1/indicators", params={"limit": 10})
@@ -78,10 +81,15 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         status = client.get("/api/v1/data-sources/fred/status")
         bls_status = client.get("/api/v1/data-sources/bls/status")
         bea_status = client.get("/api/v1/data-sources/bea/status")
+        census_status = client.get("/api/v1/data-sources/census/status")
         mappings = client.get("/api/v1/source-mappings", params={"source": "bls", "limit": 5})
         bea_mappings = client.get(
             "/api/v1/source-mappings",
             params={"source": "BEA", "enabled": True, "limit": 5},
+        )
+        census_mappings = client.get(
+            "/api/v1/source-mappings",
+            params={"source": "CENSUS", "enabled": True, "limit": 10},
         )
         mapping = client.get("/api/v1/source-mappings/US_CPI")
 
@@ -102,6 +110,13 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert bea_status.json()["pending_review_count"] == 0
     assert bea_status.json()["usable_mapping_count"] == 5
     assert "offline-bea-test-credential" not in bea_status.text
+    assert census_status.status_code == 200
+    assert census_status.json()["api_key_configured"] is True
+    assert census_status.json()["direct_mapping_count"] == 6
+    assert census_status.json()["supporting_component_count"] == 1
+    assert census_status.json()["pending_review_count"] == 7
+    assert census_status.json()["usable_direct_mapping_count"] == 0
+    assert "offline-census-test-credential" not in census_status.text
     assert mappings.status_code == 200
     assert len(mappings.json()) == 5
     assert bea_mappings.status_code == 200
@@ -109,6 +124,13 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert {item["mapping_status"] for item in bea_mappings.json()} == {
         "valid",
         "valid_with_warning",
+    }
+    assert census_mappings.status_code == 200
+    assert len(census_mappings.json()) == 7
+    assert {item["mapping_status"] for item in census_mappings.json()} == {"pending_review"}
+    assert {item["mapping_type"] for item in census_mappings.json()} == {
+        "DIRECT",
+        "SUPPORTING_COMPONENT",
     }
     assert mapping.status_code == 200
     assert mapping.json()[0]["source_series_id"] == "CUSR0000SA0"

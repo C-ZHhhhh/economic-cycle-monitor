@@ -13,6 +13,8 @@ from app.data_sources.bea.exceptions import BeaError, BeaRequestError
 from app.data_sources.bea.schemas import BeaPayload
 from app.data_sources.bls.exceptions import BlsRequestError
 from app.data_sources.bls.schemas import BlsPayload
+from app.data_sources.census.exceptions import CensusError, CensusRequestError
+from app.data_sources.census.schemas import CensusPayload
 from app.data_sources.fred.exceptions import FredRequestError
 from app.data_sources.fred.schemas import FredObservation, FredPayload
 from app.data_sources.official.schemas import OfficialObservation
@@ -120,6 +122,29 @@ def record_successful_bea_request(session: Session, run_id: UUID, payload: BeaPa
     )
 
 
+def record_successful_census_request(
+    session: Session, run_id: UUID, payload: CensusPayload
+) -> None:
+    """Persist one credential-free Census request audit record."""
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="census",
+            endpoint=payload.endpoint,
+            series_id=None,
+            request_parameters_json=payload.sanitized_parameters,
+            started_at=payload.started_at,
+            finished_at=payload.finished_at,
+            http_status=payload.status_code,
+            success=True,
+            attempt_count=payload.attempt_count,
+            response_hash=payload.response_hash,
+            response_path=str(payload.response_path) if payload.response_path else None,
+            from_cache=payload.from_cache,
+        )
+    )
+
+
 def record_failed_bls_request(
     session: Session,
     run_id: UUID,
@@ -183,6 +208,43 @@ def record_failed_bea_request(
             error_type=type(error).__name__,
             error_message=(
                 str(error) if isinstance(error, BeaError) else "Unexpected BEA request failure"
+            ),
+        )
+    )
+
+
+def record_failed_census_request(
+    session: Session,
+    run_id: UUID,
+    *,
+    endpoint: str,
+    parameters: dict[str, object],
+    error: Exception,
+) -> None:
+    """Persist a Census failure without query credentials or exception URLs."""
+    now = datetime.now(UTC)
+    safe = {
+        key: value
+        for key, value in parameters.items()
+        if key.lower() not in {"key", "api_key", "apikey"}
+    }
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="census",
+            endpoint=endpoint,
+            series_id=None,
+            request_parameters_json=safe,
+            started_at=now,
+            finished_at=now,
+            http_status=(error.status_code if isinstance(error, CensusRequestError) else None),
+            success=False,
+            attempt_count=(error.attempt_count if isinstance(error, CensusRequestError) else 1),
+            error_type=type(error).__name__,
+            error_message=(
+                str(error)
+                if isinstance(error, CensusError)
+                else "Unexpected Census request failure"
             ),
         )
     )

@@ -80,3 +80,46 @@ def test_bea_reviewed_mapping_seed_is_usable_and_becomes_primary(
     assert gdp.primary_source == "bea"
     assert gdp.primary_source_series_id == "A191RX"
     assert get_active_source_mapping(postgres_session, "US_REAL_GDP", "bea") is not None
+
+
+def test_census_pending_and_supporting_mappings_cannot_become_primary(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    catalog = load_source_mapping_catalog_for("census")
+    result = seed_source_mappings(postgres_session, catalog)
+
+    assert result.inserted + result.unchanged == 7
+    rows = postgres_session.scalars(
+        select(IndicatorSourceMapping).where(IndicatorSourceMapping.source == "census")
+    ).all()
+    assert len(rows) == 7
+    assert {item.mapping_status for item in rows} == {"pending_review"}
+    retail = next(item for item in rows if item.indicator_id == "US_REAL_RETAIL_SALES")
+    retail.mapping_status = "valid"
+    retail.metadata_checked_at = datetime.now(UTC)
+    postgres_session.flush()
+
+    indicator = get_indicator(postgres_session, "US_REAL_RETAIL_SALES")
+    assert indicator is not None
+    assert indicator.primary_source == "fred"
+    assert get_active_source_mapping(postgres_session, "US_REAL_RETAIL_SALES", "census") is None
+
+
+def test_reviewed_census_direct_mapping_is_primary_eligible(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    catalog = load_source_mapping_catalog_for("census")
+    mappings = [
+        item.model_copy(update={"mapping_status": "valid"})
+        if item.indicator_id == "US_HOUSING_STARTS"
+        else item
+        for item in catalog.mappings
+    ]
+    seed_source_mappings(postgres_session, catalog.model_copy(update={"mappings": mappings}))
+
+    indicator = get_indicator(postgres_session, "US_HOUSING_STARTS")
+    assert indicator is not None
+    assert indicator.primary_source == "census"
+    assert get_active_source_mapping(postgres_session, "US_HOUSING_STARTS", "census") is not None

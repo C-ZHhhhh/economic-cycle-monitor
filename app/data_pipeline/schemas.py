@@ -98,6 +98,26 @@ class BeaSyncOptions(PipelineSelection):
     dry_run: bool = False
 
 
+class CensusSelection(PipelineSelection):
+    """Census selection with an optional configured dataset boundary."""
+
+    dataset: str | None = None
+
+
+class CensusBackfillOptions(CensusSelection):
+    """Bounded Census EITS history expressed in inclusive source months."""
+
+    start: date = date(2000, 1, 1)
+    end: date = Field(default_factory=lambda: date.today().replace(day=1))
+    dry_run: bool = False
+
+
+class CensusSyncOptions(CensusSelection):
+    """Incremental Census synchronization options."""
+
+    dry_run: bool = False
+
+
 class SourceComparisonOptions(PipelineSelection):
     """Bounded source-to-source comparison options."""
 

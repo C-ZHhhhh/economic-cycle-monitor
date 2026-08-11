@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from agents.macro.service import create_mock_run as create_mock_run_service
 from app.data_pipeline.bea_service import BeaPipelineService
 from app.data_pipeline.bls_service import BlsPipelineService
+from app.data_pipeline.census_service import CensusPipelineService
 from app.data_pipeline.repository import finish_sync_run, start_sync_run
 from app.data_pipeline.schemas import (
     BackfillOptions,
@@ -26,6 +27,9 @@ from app.data_pipeline.schemas import (
     BeaSyncOptions,
     BlsBackfillOptions,
     BlsSyncOptions,
+    CensusBackfillOptions,
+    CensusSelection,
+    CensusSyncOptions,
     PipelineSelection,
     SourceComparisonOptions,
     SyncOptions,
@@ -36,6 +40,7 @@ from app.data_pipeline.source_comparison import SourceComparisonService
 from app.data_quality.service import run_database_quality_checks
 from app.data_sources.bea.factory import create_bea_client
 from app.data_sources.bls.factory import create_bls_client
+from app.data_sources.census.factory import create_census_client
 from app.data_sources.fred.factory import create_fred_client
 from app.database.models import DataSourceRequest, IndicatorSourceMapping, SyncRun
 from app.database.session import check_database, create_database_engine, db_session
@@ -122,6 +127,13 @@ def _require_bea_enabled(settings: Settings) -> None:
         _fail("BEA API key is not configured")
 
 
+def _require_census_enabled(settings: Settings) -> None:
+    if not settings.census_enabled:
+        _fail("Census is disabled; set CENSUS_ENABLED=true before making Census API requests")
+    if settings.census_api_key is None:
+        _fail("Census API key is not configured")
+
+
 @app.command("create-mock-run")
 def create_mock_run() -> None:
     """Create one validated mock run and report in PostgreSQL."""
@@ -151,6 +163,17 @@ def _parse_date(value: str, option_name: str) -> date:
         raise typer.BadParameter("must use YYYY-MM-DD", param_hint=option_name) from exc
 
 
+def _parse_month(value: str, option_name: str) -> date:
+    """Parse an inclusive Census month without accepting day-level ambiguity."""
+    try:
+        parsed = date.fromisoformat(f"{value}-01")
+    except ValueError as exc:
+        raise typer.BadParameter("must use YYYY-MM", param_hint=option_name) from exc
+    if parsed.year < 1959 or parsed.year > 2100:
+        raise typer.BadParameter("year must be between 1959 and 2100", param_hint=option_name)
+    return parsed
+
+
 @app.command("seed-indicators")
 def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
     """Idempotently synchronize the versioned indicator catalog."""
@@ -165,6 +188,9 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
             bea_mapping_result = seed_source_mappings(
                 session, load_source_mapping_catalog_for("bea")
             )
+            census_mapping_result = seed_source_mappings(
+                session, load_source_mapping_catalog_for("census")
+            )
             summary = SyncSummary(
                 run_id=run.run_id,
                 operation=run.operation,
@@ -176,6 +202,7 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
                     result.model_dump(),
                     {"bls_mappings": bls_mapping_result.model_dump()},
                     {"bea_mappings": bea_mapping_result.model_dump()},
+                    {"census_mappings": census_mapping_result.model_dump()},
                 ],
             )
             finish_sync_run(session, run, summary)
@@ -184,6 +211,7 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
                 **result.model_dump(),
                 "bls_mappings": bls_mapping_result.model_dump(),
                 "bea_mappings": bea_mapping_result.model_dump(),
+                "census_mappings": census_mapping_result.model_dump(),
             }
     except (SQLAlchemyError, OSError, RuntimeError, ValueError):
         _fail("Indicator catalog could not be synchronized")
@@ -566,6 +594,128 @@ def sync_bea_command(
         raise typer.Exit(code=1)
 
 
+async def _run_validate_census(
+    session: Session,
+    settings: Settings,
+    options: tuple[CensusSelection, bool],
+) -> SyncSummary:
+    selection, dry_run = options
+    async with create_census_client(settings) as client:
+        summary = await CensusPipelineService(session, settings, client).validate_mappings(
+            selection
+        )
+    if dry_run:
+        session.rollback()
+    return summary
+
+
+@app.command("validate-census-mappings")
+def validate_census_mappings_command(
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    dataset: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate Census candidate dimensions without promoting pending mappings."""
+    settings = _load_settings()
+    _require_census_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_validate_census,
+        (
+            CensusSelection(
+                indicator_id=indicator,
+                module=module,
+                enabled_only=enabled_only,
+                dataset=dataset,
+            ),
+            dry_run,
+        ),
+        "Census mapping validation failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.failure_count:
+        raise typer.Exit(code=1)
+
+
+async def _run_census_backfill(
+    session: Session, settings: Settings, options: CensusBackfillOptions
+) -> SyncSummary:
+    async with create_census_client(settings) as client:
+        return await CensusPipelineService(session, settings, client).backfill(options)
+
+
+@app.command("backfill-census")
+def backfill_census_command(
+    start: str = typer.Option("2000-01"),
+    end: str = typer.Option(date.today().strftime("%Y-%m")),
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    dataset: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Backfill only live-reviewed DIRECT Census mappings."""
+    settings = _load_settings()
+    _require_census_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_census_backfill,
+        CensusBackfillOptions(
+            indicator_id=indicator,
+            module=module,
+            enabled_only=enabled_only,
+            dataset=dataset,
+            start=_parse_month(start, "--start"),
+            end=_parse_month(end, "--end"),
+            dry_run=dry_run,
+        ),
+        "Census backfill failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.status == "failed":
+        raise typer.Exit(code=1)
+
+
+async def _run_census_sync(
+    session: Session, settings: Settings, options: CensusSyncOptions
+) -> SyncSummary:
+    async with create_census_client(settings) as client:
+        return await CensusPipelineService(session, settings, client).sync(options)
+
+
+@app.command("sync-census")
+def sync_census_command(
+    indicator: str | None = typer.Option(None),
+    module: str | None = typer.Option(None),
+    dataset: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Incrementally synchronize reviewed DIRECT Census mappings."""
+    settings = _load_settings()
+    _require_census_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_census_sync,
+        CensusSyncOptions(
+            indicator_id=indicator,
+            module=module,
+            enabled_only=enabled_only,
+            dataset=dataset,
+            dry_run=dry_run,
+        ),
+        "Census incremental synchronization failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.status == "failed":
+        raise typer.Exit(code=1)
+
+
 @app.command("sync-bls")
 def sync_bls_command(
     indicator: str | None = typer.Option(None),
@@ -607,8 +757,8 @@ def compare_sources_command(
     """Compare independently stored official and FRED observations in pages."""
     primary_source = primary.lower()
     secondary_source = secondary.lower()
-    if primary_source not in {"bls", "bea"} or secondary_source != "fred":
-        _fail("Supported comparisons use --primary bls|bea --secondary fred")
+    if primary_source not in {"bls", "bea", "census"} or secondary_source != "fred":
+        _fail("Supported comparisons use --primary bls|bea|census --secondary fred")
     settings = _load_settings()
     engine = create_database_engine(settings.database_url)
     try:
@@ -638,6 +788,8 @@ PipelineOptions = (
     | BlsSyncOptions
     | BeaBackfillOptions
     | BeaSyncOptions
+    | CensusBackfillOptions
+    | CensusSyncOptions
     | tuple[str, date]
     | tuple[PipelineSelection, bool]
 )
@@ -745,8 +897,8 @@ def show_source_status_command(
 ) -> None:
     """Show secret-free official-source configuration, mapping, and request status."""
     normalized = source.lower()
-    if normalized not in {"bls", "bea"}:
-        _fail("Source status supports only BLS and BEA")
+    if normalized not in {"bls", "bea", "census"}:
+        _fail("Source status supports only BLS, BEA, and Census")
     settings = _load_settings()
     engine = create_database_engine(settings.database_url)
     try:
@@ -824,6 +976,19 @@ def clear_bea_cache_command() -> None:
     if target.exists():
         shutil.rmtree(target)
     typer.echo("OK: BEA cache is clear")
+
+
+@app.command("clear-census-cache")
+def clear_census_cache_command() -> None:
+    """Remove only the configured Census cache directory."""
+    settings = _load_settings()
+    target = (settings.cache_dir / "census").resolve()
+    cache_root = settings.cache_dir.resolve()
+    if target.parent != cache_root:
+        _fail("Configured Census cache path is unsafe")
+    if target.exists():
+        shutil.rmtree(target)
+    typer.echo("OK: Census cache is clear")
 
 
 if __name__ == "__main__":

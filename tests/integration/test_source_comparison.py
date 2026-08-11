@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import SourceComparisonOptions
 from app.data_pipeline.source_comparison import SourceComparisonService
-from app.database.models import RawObservation
+from app.database.models import IndicatorSourceMapping, RawObservation
 from app.indicators.config import load_indicator_catalog
 from app.indicators.service import seed_indicator_catalog
+from app.source_mappings.config import load_source_mapping_catalog_for
+from app.source_mappings.repository import seed_source_mappings
 
 
 def _observation(source: str, when: date, value: str) -> RawObservation:
@@ -180,3 +182,30 @@ def test_bea_comparison_rejects_missing_unit_multiplier_audit_evidence(
     )
 
     assert summary.results[0]["counts"] == {"normalization_mismatch": 1}
+
+
+@pytest.mark.integration
+def test_census_supporting_component_is_excluded_from_direct_comparison(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    seed_source_mappings(postgres_session, load_source_mapping_catalog_for("census"))
+    census_mapping = next(
+        item
+        for item in postgres_session.query(IndicatorSourceMapping).filter_by(source="census").all()
+        if item.indicator_id == "US_REAL_RETAIL_SALES"
+    )
+    census_mapping.mapping_status = "valid"
+    census_mapping.metadata_checked_at = datetime.now(UTC)
+    postgres_session.flush()
+
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_REAL_RETAIL_SALES",
+            primary_source="census",
+            secondary_source="fred",
+        )
+    )
+
+    assert summary.indicator_count == 0
+    assert summary.results == []

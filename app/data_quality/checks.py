@@ -46,6 +46,13 @@ QUALITY_RULES = (
     "invalid_unit_multiplier",
     "unexpected_table_line",
     "unexpected_series_code",
+    "unexpected_dataset",
+    "unexpected_category",
+    "unexpected_data_type",
+    "unexpected_geography",
+    "unexpected_seasonal_adjustment",
+    "unexpected_unit",
+    "derived_series_not_directly_comparable",
 )
 
 

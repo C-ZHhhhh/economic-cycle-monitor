@@ -7,6 +7,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.database.models import IndicatorRegistry, IndicatorSourceMapping
+from app.source_mappings.policy import source_mapping_is_direct
 from app.source_mappings.schemas import (
     SourceMappingCatalog,
     SourceMappingDefinition,
@@ -98,6 +99,7 @@ def seed_source_mappings(
             and definition.enabled
             and definition.mapping_status in {"valid", "valid_with_warning"}
             and definition.source_priority == 1
+            and source_mapping_is_direct(definition.source_parameters)
         ):
             indicator.primary_source = definition.source
             indicator.primary_source_series_id = definition.source_series_id
@@ -150,7 +152,7 @@ def get_active_source_mapping(
     session: Session, indicator_id: str, source: str
 ) -> IndicatorSourceMapping | None:
     """Return the highest-priority active usable mapping for an indicator/source."""
-    return session.scalar(
+    candidates = session.scalars(
         select(IndicatorSourceMapping)
         .where(
             IndicatorSourceMapping.indicator_id == indicator_id,
@@ -159,5 +161,9 @@ def get_active_source_mapping(
             IndicatorSourceMapping.mapping_status.in_({"valid", "valid_with_warning"}),
         )
         .order_by(IndicatorSourceMapping.source_priority, IndicatorSourceMapping.id.desc())
-        .limit(1)
+        .limit(100)
+    ).all()
+    return next(
+        (item for item in candidates if source_mapping_is_direct(item.source_parameters_json)),
+        None,
     )
