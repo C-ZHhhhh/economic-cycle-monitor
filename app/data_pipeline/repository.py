@@ -15,6 +15,8 @@ from app.data_sources.bls.exceptions import BlsRequestError
 from app.data_sources.bls.schemas import BlsPayload
 from app.data_sources.census.exceptions import CensusError, CensusRequestError
 from app.data_sources.census.schemas import CensusPayload
+from app.data_sources.dol.schemas import DolPayload
+from app.data_sources.federal_reserve.schemas import FederalReservePayload
 from app.data_sources.fred.exceptions import FredRequestError
 from app.data_sources.fred.schemas import FredObservation, FredPayload
 from app.data_sources.official.schemas import OfficialObservation
@@ -141,6 +143,80 @@ def record_successful_census_request(
             response_hash=payload.response_hash,
             response_path=str(payload.response_path) if payload.response_path else None,
             from_cache=payload.from_cache,
+        )
+    )
+
+
+def record_successful_federal_reserve_request(
+    session: Session, run_id: UUID, payload: FederalReservePayload
+) -> None:
+    """Persist a successful public Board release request."""
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="federal_reserve",
+            endpoint=payload.endpoint,
+            series_id=None,
+            request_parameters_json={},
+            started_at=payload.started_at,
+            finished_at=payload.finished_at,
+            http_status=payload.status_code,
+            success=True,
+            attempt_count=payload.attempt_count,
+            response_hash=payload.response_hash,
+            response_path=str(payload.response_path) if payload.response_path else None,
+            from_cache=payload.from_cache,
+        )
+    )
+
+
+def record_successful_dol_request(session: Session, run_id: UUID, payload: DolPayload) -> None:
+    """Persist a successful credential-free DOL report request."""
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source="dol",
+            endpoint=payload.endpoint,
+            series_id=None,
+            request_parameters_json=payload.sanitized_parameters,
+            started_at=payload.started_at,
+            finished_at=payload.finished_at,
+            http_status=payload.status_code,
+            success=True,
+            attempt_count=payload.attempt_count,
+            response_hash=payload.response_hash,
+            response_path=str(payload.response_path) if payload.response_path else None,
+            from_cache=payload.from_cache,
+        )
+    )
+
+
+def record_failed_official_request(
+    session: Session,
+    run_id: UUID,
+    *,
+    source: str,
+    endpoint: str,
+    parameters: dict[str, object],
+    error: Exception,
+) -> None:
+    """Persist a safe Fed or DOL failure without request URLs from exceptions."""
+    if source not in {"federal_reserve", "dol"}:
+        raise ValueError("Unsupported official request audit source")
+    now = datetime.now(UTC)
+    session.add(
+        DataSourceRequest(
+            sync_run_id=run_id,
+            source=source,
+            endpoint=endpoint,
+            series_id=None,
+            request_parameters_json=parameters,
+            started_at=now,
+            finished_at=now,
+            success=False,
+            attempt_count=1,
+            error_type=type(error).__name__,
+            error_message=str(error),
         )
     )
 
@@ -338,6 +414,8 @@ def persist_official_observations(
         details = {
             "source_series_id": source_series_id,
             "source_period": item.source_period,
+            "release_date": item.release_date.isoformat() if item.release_date else None,
+            "release_date_status": item.release_date_status,
             "is_preliminary": item.is_preliminary,
             "footnotes": item.footnotes,
             **item.details,
@@ -384,6 +462,7 @@ def persist_official_observations(
                 indicator_id=indicator.indicator_id,
                 observation_date=item.date,
                 vintage_date=retrieved_at.date(),
+                release_date=item.release_date,
                 available_at=retrieved_at,
                 release_stage="revision",
                 revision_number=int(revision_number or 0) + 1,

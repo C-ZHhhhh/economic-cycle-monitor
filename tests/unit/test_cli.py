@@ -88,6 +88,14 @@ def test_every_stage_two_command_has_help() -> None:
         "backfill-census",
         "sync-census",
         "clear-census-cache",
+        "validate-federal-reserve-mappings",
+        "backfill-federal-reserve",
+        "sync-federal-reserve",
+        "clear-federal-reserve-cache",
+        "validate-dol-mappings",
+        "backfill-dol",
+        "sync-dol",
+        "clear-dol-cache",
     ]
 
     for command in commands:

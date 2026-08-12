@@ -1,0 +1,95 @@
+schema_version: "0.6.0"
+source: federal_reserve
+mappings:
+  - indicator_id: US_INDUSTRIAL_PRODUCTION
+    fred_series_id: INDPRO
+    source: federal_reserve
+    source_series_id: IP.B50001.S
+    source_dataset: G17
+    source_parameters: {mapping_type: DIRECT, release: G17, canonical_series_id: IP.B50001.S, transport: official_text, transport_series_code: B50001, dataset: G17, group: null, representation: index, frequency: M, seasonal_adjustment: SA, source_unit: index, expected_base_year: 2017, data_path: releases/g17/ipdisk/ip_sa.txt, documentation_path: releases/g17/ipdisk/ip_series.txt, metadata_path: releases/g17/current/default.htm, first_available_period: "1919-01"}
+    official_name: "Industrial Production: Total Index"
+    source_unit: index_2017_100
+    expected_unit: index
+    expected_frequency: monthly
+    expected_seasonal_adjustment: seasonally_adjusted
+    source_priority: 1
+    fallback_source: fred
+    vintage_source: alfred
+    normalization_rule: identity_with_validated_base
+    comparison_tolerance: 0.001
+    distribution_lag_days: 7
+    revision_lookback_years: 100
+    mapping_status: pending_review
+    enabled: true
+    mapping_version: "0.6.0"
+    validation_url: https://www.federalreserve.gov/releases/g17/current/default.htm
+    notes: "Candidate requires Live Gate; production uses static Board text, never a DDP package. Base transition blocks writes."
+  - indicator_id: US_MANUFACTURING_CAPACITY
+    fred_series_id: CUMFNS
+    source: federal_reserve
+    source_series_id: CAPUTL.GMF.S
+    source_dataset: G17
+    source_parameters: {mapping_type: DIRECT, release: G17, canonical_series_id: CAPUTL.GMF.S, transport: official_text, transport_series_code: GMF, dataset: G17, group: null, representation: utilization, frequency: M, seasonal_adjustment: SA, source_unit: percent, expected_base_year: null, data_path: releases/g17/ipdisk/utl_sa.txt, documentation_path: releases/g17/ipdisk/utl_series.txt, metadata_path: releases/g17/current/default.htm, first_available_period: "1948-01"}
+    official_name: Manufacturing Capacity Utilization
+    source_unit: percent
+    expected_unit: percent
+    expected_frequency: monthly
+    expected_seasonal_adjustment: seasonally_adjusted
+    source_priority: 1
+    fallback_source: fred
+    vintage_source: alfred
+    normalization_rule: identity
+    comparison_tolerance: 0.001
+    distribution_lag_days: 7
+    revision_lookback_years: 100
+    mapping_status: pending_review
+    enabled: true
+    mapping_version: "0.6.0"
+    validation_url: https://www.federalreserve.gov/releases/g17/current/default.htm
+    notes: "Candidate requires Live Gate. CAP.GMF.S is capacity and must never match this utilization target."
+  - indicator_id: US_CONSUMER_CREDIT
+    fred_series_id: TOTALSL
+    source: federal_reserve
+    source_series_id: DTCTL.M
+    source_dataset: G19
+    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTL.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: data/g19/g19_xml.zip, documentation_path: releases/g19/current/default.htm, first_available_period: "1943-01"}
+    official_name: Total Consumer Credit Owned and Securitized
+    source_unit: billions_dollars
+    expected_unit: millions_dollars
+    expected_frequency: monthly
+    expected_seasonal_adjustment: seasonally_adjusted
+    source_priority: 1
+    fallback_source: fred
+    vintage_source: alfred
+    normalization_rule: billions_to_millions
+    comparison_tolerance: 0.001
+    distribution_lag_days: 10
+    revision_lookback_years: 100
+    mapping_status: pending_review
+    enabled: true
+    mapping_version: "0.6.0"
+    validation_url: https://www.federalreserve.gov/releases/g19/current/default.htm
+    notes: "Candidate requires Live Gate and exact full SeriesKey validation from the complete XML release."
+  - indicator_id: US_REVOLVING_CREDIT
+    fred_series_id: REVOLSL
+    source: federal_reserve
+    source_series_id: DTCTLR.M
+    source_dataset: G19
+    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTLR.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: data/g19/g19_xml.zip, documentation_path: releases/g19/current/default.htm, first_available_period: "1968-01"}
+    official_name: Revolving Consumer Credit Owned and Securitized
+    source_unit: billions_dollars
+    expected_unit: millions_dollars
+    expected_frequency: monthly
+    expected_seasonal_adjustment: seasonally_adjusted
+    source_priority: 1
+    fallback_source: fred
+    vintage_source: alfred
+    normalization_rule: billions_to_millions
+    comparison_tolerance: 0.001
+    distribution_lag_days: 10
+    revision_lookback_years: 100
+    mapping_status: pending_review
+    enabled: true
+    mapping_version: "0.6.0"
+    validation_url: https://www.federalreserve.gov/releases/g19/current/default.htm
+    notes: "Candidate requires Live Gate and exact full SeriesKey validation from the complete XML release."

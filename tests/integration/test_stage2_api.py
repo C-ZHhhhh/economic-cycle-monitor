@@ -31,6 +31,8 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         seed_source_mappings(session, load_source_mapping_catalog())
         seed_source_mappings(session, load_source_mapping_catalog_for("bea"))
         seed_source_mappings(session, load_source_mapping_catalog_for("census"))
+        seed_source_mappings(session, load_source_mapping_catalog_for("federal_reserve"))
+        seed_source_mappings(session, load_source_mapping_catalog_for("dol"))
         session.execute(delete(RawObservation).where(RawObservation.indicator_id == "US_CPI"))
         session.add_all(
             [
@@ -68,6 +70,8 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         bea_enabled=True,
         census_api_key=SecretStr("offline-census-test-credential"),
         census_enabled=True,
+        federal_reserve_enabled=True,
+        dol_enabled=True,
     )
     with TestClient(create_app(settings)) as client:
         indicators = client.get("/api/v1/indicators", params={"limit": 10})
@@ -82,6 +86,8 @@ def test_indicator_list_observation_pagination_and_key_redaction(
         bls_status = client.get("/api/v1/data-sources/bls/status")
         bea_status = client.get("/api/v1/data-sources/bea/status")
         census_status = client.get("/api/v1/data-sources/census/status")
+        fed_status = client.get("/api/v1/data-sources/federal-reserve/status")
+        dol_status = client.get("/api/v1/data-sources/dol/status")
         mappings = client.get("/api/v1/source-mappings", params={"source": "bls", "limit": 5})
         bea_mappings = client.get(
             "/api/v1/source-mappings",
@@ -117,6 +123,14 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert census_status.json()["pending_review_count"] == 0
     assert census_status.json()["usable_direct_mapping_count"] == 6
     assert "offline-census-test-credential" not in census_status.text
+    assert fed_status.status_code == 200
+    assert fed_status.json()["credentials_required"] is False
+    assert fed_status.json()["registered_mapping_count"] == 4
+    assert fed_status.json()["pending_review_count"] == 4
+    assert dol_status.status_code == 200
+    assert dol_status.json()["credentials_required"] is False
+    assert dol_status.json()["registered_mapping_count"] == 2
+    assert dol_status.json()["pending_review_count"] == 2
     assert mappings.status_code == 200
     assert len(mappings.json()) == 5
     assert bea_mappings.status_code == 200
