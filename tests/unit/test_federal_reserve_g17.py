@@ -128,3 +128,13 @@ def test_real_g17_multi_series_shape_selects_only_exact_transport_code() -> None
     assert len(observations) == 12
     assert observations[0].value == Decimal("1")
     assert observations[-1].value == Decimal("12")
+
+
+def test_current_partial_year_preserves_every_published_month() -> None:
+    body = b'"B50001" 2026 101.0 102.0 103.0 104.0 105.0 106.0\n'
+
+    observations = parse_g17_text(body, _identity(), base_year=2017, release_date=date(2026, 7, 17))
+
+    assert len(observations) == 6
+    assert observations[-1].source_period == "2026-06"
+    assert observations[-1].value == Decimal("106.0")

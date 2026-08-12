@@ -99,7 +99,7 @@ def parse_g17_text(
     for line in text.splitlines():
         fields = line.replace(",", " ").replace('"', "").split()
         if (
-            len(fields) < 14
+            len(fields) < 3
             or fields[0] != identity.transport_series_code
             or not re.fullmatch(r"(?:19|20)\d{2}", fields[1])
         ):
