@@ -27,6 +27,7 @@ def _identity(**updates: object) -> FederalReserveMappingIdentity:
         "seasonal_adjustment": "SA",
         "source_unit": "billions_dollars",
         "data_path": "data/g19/g19_xml.zip",
+        "description_keywords": ["consumer", "credit"],
         "first_available_period": "1943-01",
     }
     values.update(updates)

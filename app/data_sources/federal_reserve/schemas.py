@@ -27,6 +27,7 @@ class FederalReserveMappingIdentity(BaseModel):
     data_path: str
     documentation_path: str | None = None
     metadata_path: str | None = None
+    description_keywords: list[str]
     first_available_period: str
 
 

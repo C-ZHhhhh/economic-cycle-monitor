@@ -1,6 +1,7 @@
 """Strict parser for Federal Reserve Board G.17 static text releases."""
 
 import re
+from calendar import month_name
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -20,6 +21,10 @@ _BASE_PATTERNS = (
 _RELEASE_DATE = re.compile(
     r"(?:release(?:d|\s+date)?|updated)\D{0,20}"
     r"(20\d{2})[-/]([01]?\d)[-/]([0-3]?\d)",
+    re.IGNORECASE,
+)
+_NAMED_RELEASE_DATE = re.compile(
+    r"release\s+date\s*:\s*([A-Za-z]+)\s+([0-3]?\d),\s*(20\d{2})",
     re.IGNORECASE,
 )
 _MISSING = {"", ".", "--", "NA", "N/A"}
@@ -42,9 +47,20 @@ def validate_g17_identity(
     """Validate canonical/transport identities and the configured dynamic base gate."""
     if identity.release != "G17" or identity.transport != "official_text":
         raise FederalReserveIdentityError("unexpected_release_transport")
-    required = {identity.canonical_series_id, identity.transport_series_code or ""}
-    if not all(token and token in documentation_text for token in required):
+    transport = identity.transport_series_code or ""
+    prefix = "IP" if identity.representation == "index" else "CAPUTL"
+    if identity.canonical_series_id != f"{prefix}.{transport}.S":
         raise FederalReserveIdentityError("unexpected_series_identity")
+    matching_lines = [
+        line
+        for line in documentation_text.splitlines()
+        if re.search(rf"\b{re.escape(transport)}\b", line)
+    ]
+    if len(matching_lines) != 1:
+        raise FederalReserveIdentityError("unexpected_transport_series_code")
+    normalized_line = matching_lines[0].casefold()
+    if not all(keyword.casefold() in normalized_line for keyword in identity.description_keywords):
+        raise FederalReserveIdentityError("unexpected_series_description")
     base_year: int | None = None
     if identity.representation == "index":
         base_year = parse_g17_base_year(metadata_text)
@@ -53,9 +69,17 @@ def validate_g17_identity(
                 f"unexpected_base_year: expected {identity.expected_base_year}, returned {base_year}"
             )
     release_match = _RELEASE_DATE.search(metadata_text)
-    release_date = (
-        date(*(int(release_match.group(index)) for index in (1, 2, 3))) if release_match else None
-    )
+    release_date: date | None
+    if release_match:
+        release_date = date(*(int(release_match.group(index)) for index in (1, 2, 3)))
+    else:
+        named = _NAMED_RELEASE_DATE.search(metadata_text)
+        months = {name.casefold(): number for number, name in enumerate(month_name) if name}
+        release_date = (
+            date(int(named.group(3)), months[named.group(1).casefold()], int(named.group(2)))
+            if named and named.group(1).casefold() in months
+            else None
+        )
     return base_year, release_date
 
 
@@ -73,11 +97,15 @@ def parse_g17_text(
         raise FederalReserveResponseError("G.17 text is not UTF-8") from error
     observations: list[OfficialObservation] = []
     for line in text.splitlines():
-        fields = line.replace(",", " ").split()
-        if len(fields) < 13 or not re.fullmatch(r"(?:19|20)\d{2}", fields[0]):
+        fields = line.replace(",", " ").replace('"', "").split()
+        if (
+            len(fields) < 14
+            or fields[0] != identity.transport_series_code
+            or not re.fullmatch(r"(?:19|20)\d{2}", fields[1])
+        ):
             continue
-        year = int(fields[0])
-        for month, raw_value in enumerate(fields[1:13], start=1):
+        year = int(fields[1])
+        for month, raw_value in enumerate(fields[2:14], start=1):
             if raw_value.upper() in _MISSING:
                 continue
             try:

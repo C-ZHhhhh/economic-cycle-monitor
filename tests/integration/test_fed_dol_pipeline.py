@@ -103,9 +103,9 @@ async def test_unexpected_g17_base_blocks_pipeline_write_and_emits_quality_event
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("default.htm"):
             return httpx.Response(200, text="<html>Released 2026-08-01; Index 2022=100</html>")
-        if request.url.path.endswith("ip_series.txt"):
-            return httpx.Response(200, text="IP.B50001.S Total industrial production B50001")
-        return httpx.Response(200, text="2025 1 2 3 4 5 6 7 8 9 10 11 12")
+        if request.url.path.endswith("g17tab1.txt"):
+            return httpx.Response(200, text="Total index B50001")
+        return httpx.Response(200, text='"B50001" 2025 1 2 3 4 5 6 7 8 9 10 11 12')
 
     async with _fed(tmp_path, httpx.MockTransport(handler)) as client:
         summary = await FederalReservePipelineService(
