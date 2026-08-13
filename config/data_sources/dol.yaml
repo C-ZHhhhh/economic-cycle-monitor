@@ -29,7 +29,7 @@ mappings:
     source: dol
     source_series_id: r539cy:insured_unemployment:sa
     source_dataset: r539cy
-    source_parameters: {mapping_type: DIRECT, report: r539cy, scope: us, program: regular_state, series_concept: insured_unemployment, seasonal_adjustment: SA, frequency: W, unit: persons, root_tag: null, row_path: null, observation_path: null, value_path: null, observation_date_format: "%m/%d/%Y", report_run_date_attribute: null, report_run_date_format: "%m/%d/%Y", missing_value_markers: [""], expected_wire_values: {}, first_available_period: "1967-01-07"}
+    source_parameters: {mapping_type: DIRECT, report: r539cy, scope: us, program: regular_state, series_concept: insured_unemployment, seasonal_adjustment: SA, frequency: W, unit: persons, root_tag: r539cyNational, row_path: "./week", observation_path: weekEnded, value_path: ContinuedClaims/SA, observation_date_format: "%m/%d/%Y", report_run_date_attribute: rundate, report_run_date_format: "%m/%d/%Y", missing_value_markers: [""], expected_wire_values: {root_tag: [r539cyNational]}, first_available_period: "1967-01-07"}
     official_name: Insured Unemployment, Regular State Program, United States, Seasonally Adjusted
     source_unit: persons
     expected_unit: number
@@ -44,6 +44,6 @@ mappings:
     revision_lookback_years: 5
     mapping_status: pending_review
     enabled: true
-    mapping_version: "0.6.0"
+    mapping_version: "0.6.1"
     validation_url: https://oui.doleta.gov/unemploy/claims.asp
-    notes: "Candidate XML paths and exact official-equivalent concept remain pending until the independent DOL Live Gate."
+    notes: "Live schema discovery confirmed r539cyNational/week/weekEnded and ContinuedClaims/SA on 2026-08-13. The shared row-level weekEnded path is independently configured for CCSA and must pass its own FRED date-offset and history Gates before promotion."

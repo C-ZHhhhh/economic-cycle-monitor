@@ -77,8 +77,10 @@ def test_initial_and_continued_claims_use_independently_configured_value_paths()
 
     assert initial.value == Decimal("211000")
     assert continued.value == Decimal("1841000")
+    assert initial.date == continued.date == date(2026, 7, 25)
     assert initial.details["concept"] == "initial_claims"
     assert continued.details["concept"] == "insured_unemployment"
+    assert initial.details["value_path"] != continued.details["value_path"]
 
 
 def test_invalid_week_or_value_is_rejected() -> None:
