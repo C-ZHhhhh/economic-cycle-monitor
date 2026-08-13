@@ -419,6 +419,24 @@ class SourceComparisonService:
                 return False
             if details.get("seasonal_adjustment") != parameters.get("seasonal_adjustment"):
                 return False
+            if parameters.get("release") == "G19":
+                expected_wire = {
+                    "raw_frequency": parameters.get("wire_frequency"),
+                    "data_representation": parameters.get("data_representation"),
+                    "wire_unit": parameters.get("wire_unit"),
+                    "unit_multiplier": parameters.get("unit_multiplier"),
+                    "canonical_unit": definition.source_unit,
+                    "normalization_factor": "1",
+                }
+                if any(details.get(key) != value for key, value in expected_wire.items()):
+                    return False
+                try:
+                    raw_value = Decimal(str(details.get("raw_value")))
+                    canonical_value = Decimal(str(details.get("canonical_value")))
+                except (ArithmeticError, ValueError):
+                    return False
+                if raw_value != canonical_value or canonical_value != Decimal(observation.value):
+                    return False
             expected_base = parameters.get("expected_base_year")
             return expected_base is None or details.get("base_year") == expected_base
         return all(

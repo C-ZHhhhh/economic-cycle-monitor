@@ -97,6 +97,11 @@ def test_fed_and_dol_candidates_remain_pending_until_independent_live_gates() ->
     assert {item.source_parameters["data_path"] for item in g19} == {
         "releases/g19/data/FRB_g19_xml.zip"
     }
+    assert {item.source_unit for item in g19} == {"millions_usd"}
+    assert {item.normalization_rule for item in g19} == {"identity"}
+    assert {item.source_parameters["wire_frequency"] for item in g19} == {"129"}
+    assert {item.source_parameters["data_representation"] for item in g19} == {"MILLDOLL"}
+    assert {item.source_parameters["unit_multiplier"] for item in g19} == {"1000000"}
     assert all(item.fallback_source == "fred" for item in [*fed.mappings, *dol.mappings])
 
 

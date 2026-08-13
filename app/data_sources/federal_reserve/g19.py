@@ -23,9 +23,13 @@ _MISSING = {"", ".", "--", "NA", "N/A"}
 
 
 def open_bounded_xml_member(
-    body: bytes, *, max_members: int, max_uncompressed_bytes: int
+    body: bytes,
+    *,
+    data_member: str,
+    max_members: int,
+    max_uncompressed_bytes: int,
 ) -> tuple[zipfile.ZipFile, IO[bytes]]:
-    """Validate a release ZIP and return its single bounded XML member stream."""
+    """Validate a release ZIP and return the exact configured data member."""
     if not body.startswith(b"PK\x03\x04"):
         raise FederalReserveResponseError("G.19 release is not a ZIP archive")
     try:
@@ -44,11 +48,11 @@ def open_bounded_xml_member(
         if path.is_absolute() or ".." in path.parts:
             archive.close()
             raise FederalReserveResponseError("G.19 ZIP contains an unsafe member path")
-    xml_members = [item for item in members if item.filename.lower().endswith(".xml")]
-    if len(xml_members) != 1:
+    data_members = [item for item in members if item.filename == data_member]
+    if len(data_members) != 1 or not data_member.lower().endswith(".xml"):
         archive.close()
-        raise FederalReserveResponseError("G.19 ZIP must contain exactly one XML release file")
-    return archive, archive.open(xml_members[0])
+        raise FederalReserveResponseError("G.19 ZIP does not contain the exact XML data member")
+    return archive, archive.open(data_members[0])
 
 
 def parse_g19_zip(
@@ -60,17 +64,48 @@ def parse_g19_zip(
     release_date: date | None,
 ) -> dict[str, list[OfficialObservation]]:
     """Parse one full G.19 release and independently match complete SeriesKeys."""
+    if not identities:
+        return {}
+    data_members = {item.data_member for item in identities}
+    groups = {item.group for item in identities}
+    if len(data_members) != 1 or None in data_members or len(groups) != 1 or None in groups:
+        raise FederalReserveIdentityError("unexpected_release_dataset_identity")
+    data_member = next(iter(data_members))
+    expected_group = next(iter(groups))
+    assert data_member is not None
+    assert expected_group is not None
     archive, stream = open_bounded_xml_member(
-        body, max_members=max_members, max_uncompressed_bytes=max_uncompressed_bytes
+        body,
+        data_member=data_member,
+        max_members=max_members,
+        max_uncompressed_bytes=max_uncompressed_bytes,
     )
     expected = {item.canonical_series_id: item for item in identities}
     results: dict[str, list[OfficialObservation]] = {key: [] for key in expected}
     matched: set[str] = set()
+    returned_groups: set[str] = set()
+    active_group: str | None = None
     try:
         try:
-            iterator = ElementTree.iterparse(stream, events=("end",))
-            for _, element in iterator:
-                if _local(element.tag) != "Series":
+            iterator = ElementTree.iterparse(stream, events=("start", "end"))
+            for event, element in iterator:
+                local = _local(element.tag)
+                if event == "start" and local == "DataSet":
+                    dataset_id = element.attrib.get("id") or element.attrib.get("ID")
+                    if dataset_id:
+                        active_group = dataset_id
+                        returned_groups.add(dataset_id)
+                    continue
+                if event != "end":
+                    continue
+                if local == "DataSet":
+                    active_group = None
+                    element.clear()
+                    continue
+                if local != "Series":
+                    continue
+                if active_group != expected_group:
+                    element.clear()
                     continue
                 key = _series_key(element)
                 for canonical, identity in expected.items():
@@ -85,6 +120,10 @@ def parse_g19_zip(
         stream.close()
         archive.close()
     missing = sorted(set(expected) - matched)
+    if expected_group not in returned_groups:
+        raise FederalReserveIdentityError(
+            f"unexpected_release_dataset_identity: returned {sorted(returned_groups)}"
+        )
     if missing:
         raise FederalReserveIdentityError(f"unexpected_series_key: missing {missing}")
     return {key: sorted(value, key=lambda item: item.date) for key, value in results.items()}
@@ -105,26 +144,20 @@ def _series_key(element: ElementTree.Element) -> dict[str, str]:
     return key
 
 
-def _pick(key: dict[str, str], *names: str) -> str | None:
-    return next((key[name] for name in names if name in key), None)
-
-
 def _matches_identity(key: dict[str, str], identity: FederalReserveMappingIdentity) -> bool:
-    expected_series = identity.canonical_series_id
-    checks = (
-        (_pick(key, "RELEASE", "DATASET"), identity.dataset),
-        (_pick(key, "GROUP", "SERIES_GROUP"), identity.group),
-        (_pick(key, "SERIES", "SERIES_CODE", "SERIES_NAME"), expected_series),
-        (_pick(key, "REPRESENTATION", "REPRESENTATION_TYPE"), identity.representation),
-        (_pick(key, "SEASONAL_ADJUSTMENT", "SEASONAL", "ADJUSTMENT"), identity.seasonal_adjustment),
-        (_pick(key, "FREQ", "FREQUENCY"), identity.frequency),
-        (_pick(key, "UNIT", "UNIT_MEASURE"), identity.source_unit),
-        (_pick(key, "MULTIPLIER", "UNIT_MULT"), "9"),
-    )
-    return all(
-        actual is not None and actual.upper() == str(expected).upper()
-        for actual, expected in checks
-    )
+    """Match all nine dimensions in the real compact G.19 SeriesKey."""
+    expected = {
+        "CREDTYP": identity.credit_type,
+        "CURRENCY": identity.currency,
+        "DATAREP": identity.data_representation,
+        "FREQ": identity.wire_frequency,
+        "HOLDER": identity.holder,
+        "SA": identity.seasonal_adjustment,
+        "SERIES_NAME": identity.canonical_series_id,
+        "UNIT": identity.wire_unit,
+        "UNIT_MULT": identity.unit_multiplier,
+    }
+    return key == expected
 
 
 def _observations(
@@ -144,7 +177,7 @@ def _observations(
         if not period or raw_value is None or raw_value.upper() in _MISSING:
             continue
         try:
-            value = Decimal(raw_value) * Decimal(1000)
+            value = Decimal(raw_value)
             observation_date = date.fromisoformat(period[:7] + "-01")
         except (InvalidOperation, ValueError) as error:
             raise FederalReserveResponseError("G.19 observation is invalid") from error
@@ -153,12 +186,16 @@ def _observations(
             "canonical_series_id": identity.canonical_series_id,
             "series_key": key,
             "frequency": identity.frequency,
+            "raw_frequency": identity.wire_frequency,
             "seasonal_adjustment": identity.seasonal_adjustment,
             "representation": identity.representation,
             "raw_value": raw_value,
             "raw_unit": identity.source_unit,
-            "unit_multiplier": 9,
-            "canonical_unit": "millions_dollars",
+            "wire_unit": identity.wire_unit,
+            "data_representation": identity.data_representation,
+            "unit_multiplier": identity.unit_multiplier,
+            "normalization_factor": "1",
+            "canonical_unit": "millions_usd",
             "canonical_value": str(value),
             "source_identity": source_identity,
             "source_identity_hash": source_identity_hash,

@@ -52,16 +52,16 @@ mappings:
     source: federal_reserve
     source_series_id: DTCTL.M
     source_dataset: G19
-    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTL.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: releases/g19/data/FRB_g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [total, consumer, credit], first_available_period: "1943-01"}
+    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTL.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: millions_usd, data_member: G19_data.xml, wire_frequency: "129", data_representation: MILLDOLL, wire_unit: Currency, unit_multiplier: "1000000", holder: ALL, credit_type: TOTAL, currency: USD, expected_base_year: null, data_path: releases/g19/data/FRB_g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [total, consumer, credit], first_available_period: "1943-01"}
     official_name: Total Consumer Credit Owned and Securitized
-    source_unit: billions_dollars
+    source_unit: millions_usd
     expected_unit: millions_dollars
     expected_frequency: monthly
     expected_seasonal_adjustment: seasonally_adjusted
     source_priority: 1
     fallback_source: fred
     vintage_source: alfred
-    normalization_rule: billions_to_millions
+    normalization_rule: identity
     comparison_tolerance: 0.001
     distribution_lag_days: 10
     revision_lookback_years: 100
@@ -69,22 +69,22 @@ mappings:
     enabled: true
     mapping_version: "0.6.0"
     validation_url: https://www.federalreserve.gov/releases/g19/current/default.htm
-    notes: "Candidate requires Live Gate and exact full SeriesKey validation from the complete XML release."
+    notes: "Official XML wire identity is CCOUT / DTCTL.M / TOTAL / ALL / SA / FREQ 129 / MILLDOLL / Currency / UNIT_MULT 1000000. XML values are already millions of dollars, so canonical normalization factor is 1. Mapping remains pending until Live Gate comparison and backfill complete."
   - indicator_id: US_REVOLVING_CREDIT
     fred_series_id: REVOLSL
     source: federal_reserve
     source_series_id: DTCTLR.M
     source_dataset: G19
-    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTLR.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: releases/g19/data/FRB_g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [revolving, consumer, credit], first_available_period: "1968-01"}
+    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTLR.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: millions_usd, data_member: G19_data.xml, wire_frequency: "129", data_representation: MILLDOLL, wire_unit: Currency, unit_multiplier: "1000000", holder: ALL, credit_type: REV, currency: USD, expected_base_year: null, data_path: releases/g19/data/FRB_g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [revolving, consumer, credit], first_available_period: "1968-01"}
     official_name: Revolving Consumer Credit Owned and Securitized
-    source_unit: billions_dollars
+    source_unit: millions_usd
     expected_unit: millions_dollars
     expected_frequency: monthly
     expected_seasonal_adjustment: seasonally_adjusted
     source_priority: 1
     fallback_source: fred
     vintage_source: alfred
-    normalization_rule: billions_to_millions
+    normalization_rule: identity
     comparison_tolerance: 0.001
     distribution_lag_days: 10
     revision_lookback_years: 100
@@ -92,4 +92,4 @@ mappings:
     enabled: true
     mapping_version: "0.6.0"
     validation_url: https://www.federalreserve.gov/releases/g19/current/default.htm
-    notes: "Candidate requires Live Gate and exact full SeriesKey validation from the complete XML release."
+    notes: "Official XML wire identity is CCOUT / DTCTLR.M / REV / ALL / SA / FREQ 129 / MILLDOLL / Currency / UNIT_MULT 1000000. XML values are already millions of dollars, so canonical normalization factor is 1. Mapping remains pending until Live Gate comparison and backfill complete."

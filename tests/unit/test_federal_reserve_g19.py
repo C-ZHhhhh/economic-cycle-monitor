@@ -25,8 +25,17 @@ def _identity(**updates: object) -> FederalReserveMappingIdentity:
         "representation": "level",
         "frequency": "M",
         "seasonal_adjustment": "SA",
-        "source_unit": "billions_dollars",
-        "data_path": "data/g19/g19_xml.zip",
+        "source_unit": "millions_usd",
+        "data_member": "G19_data.xml",
+        "wire_frequency": "129",
+        "data_representation": "MILLDOLL",
+        "wire_unit": "Currency",
+        "unit_multiplier": "1000000",
+        "holder": "ALL",
+        "credit_type": "TOTAL",
+        "currency": "USD",
+        "data_path": "releases/g19/data/FRB_g19_xml.zip",
+        "documentation_path": "releases/g19/current/default.htm",
         "description_keywords": ["consumer", "credit"],
         "first_available_period": "1943-01",
     }
@@ -34,115 +43,137 @@ def _identity(**updates: object) -> FederalReserveMappingIdentity:
     return FederalReserveMappingIdentity.model_validate(values)
 
 
-def _zip(xml: str, name: str = "g19.xml") -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr(name, xml)
-    return buffer.getvalue()
-
-
-def _xml(**updates: str) -> str:
+def _series(**updates: str) -> str:
     attrs = {
-        "RELEASE": "G19",
-        "GROUP": "CCOUT",
-        "SERIES": "DTCTL.M",
-        "REPRESENTATION": "level",
-        "SEASONAL_ADJUSTMENT": "SA",
-        "FREQ": "M",
-        "UNIT": "billions_dollars",
-        "MULTIPLIER": "9",
+        "CREDTYP": "TOTAL",
+        "CURRENCY": "USD",
+        "DATAREP": "MILLDOLL",
+        "FREQ": "129",
+        "HOLDER": "ALL",
+        "SA": "SA",
+        "SERIES_NAME": "DTCTL.M",
+        "UNIT": "Currency",
+        "UNIT_MULT": "1000000",
     }
     attrs.update(updates)
     rendered = " ".join(f'{key}="{value}"' for key, value in attrs.items())
-    return f'<Data><Series {rendered}><Obs TIME_PERIOD="2025-01" OBS_VALUE="1.234567890123" /></Series></Data>'
+    return (
+        f"<Series {rendered}>"
+        '<Obs TIME_PERIOD="2025-01-31" OBS_VALUE="1234.567890123" OBS_STATUS="A" />'
+        "</Series>"
+    )
 
 
-def test_exact_series_key_and_decimal_normalization() -> None:
+def _xml(*series: str, dataset: str = "CCOUT") -> str:
+    return f'<MessageGroup><DataSet id="{dataset}">{"".join(series)}</DataSet></MessageGroup>'
+
+
+def _zip(
+    xml: str,
+    *,
+    data_member: str = "G19_data.xml",
+    include_structure: bool = True,
+) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(data_member, xml)
+        if include_structure:
+            archive.writestr("G19_struct.xml", "<Structure />")
+            archive.writestr("G19_CCOUT.xsd", "<schema />")
+    return buffer.getvalue()
+
+
+def test_real_series_key_preserves_decimal_and_uses_identity_normalization() -> None:
     result = parse_g19_zip(
-        _zip(_xml()),
+        _zip(_xml(_series())),
         [_identity()],
-        max_members=3,
+        max_members=5,
         max_uncompressed_bytes=10_000,
         release_date=date(2025, 2, 7),
     )["DTCTL.M"]
 
-    assert result[0].value == Decimal("1234.567890123000")
-    assert result[0].details["raw_value"] == "1.234567890123"
-    assert result[0].details["canonical_value"] == "1234.567890123000"
+    assert result[0].value == Decimal("1234.567890123")
+    assert result[0].value != Decimal("1234567.890123")
+    assert result[0].details["raw_value"] == "1234.567890123"
+    assert result[0].details["canonical_value"] == "1234.567890123"
+    assert result[0].details["data_representation"] == "MILLDOLL"
+    assert result[0].details["unit_multiplier"] == "1000000"
+    assert result[0].details["raw_frequency"] == "129"
+    assert result[0].details["frequency"] == "M"
+    assert result[0].details["canonical_unit"] == "millions_usd"
+    assert result[0].details["normalization_factor"] == "1"
+    assert result[0].details["source_identity"]["unit_multiplier"] == "1000000"
+    assert len(result[0].details["source_identity_hash"]) == 64
 
 
 @pytest.mark.parametrize(
-    ("updates", "message"),
+    "updates",
     [
-        ({"SERIES": "DTCTL_FLOW"}, "unexpected_series_key"),
-        ({"REPRESENTATION": "flow"}, "unexpected_series_key"),
-        ({"SEASONAL_ADJUSTMENT": "NSA"}, "unexpected_series_key"),
-        ({"FREQ": "A"}, "unexpected_series_key"),
-        ({"MULTIPLIER": "6"}, "unexpected_series_key"),
+        {"SERIES_NAME": "DTCTL_FLOW"},
+        {"DATAREP": "PCTCHG"},
+        {"SA": "NSA"},
+        {"FREQ": "130"},
+        {"UNIT_MULT": "1000"},
+        {"HOLDER": "FINCO"},
+        {"CREDTYP": "REV"},
+        {"CURRENCY": "EUR"},
+        {"UNIT": "Percent"},
     ],
 )
-def test_every_series_key_dimension_is_required(updates: dict[str, str], message: str) -> None:
-    with pytest.raises(FederalReserveIdentityError, match=message):
+def test_every_total_credit_series_key_dimension_is_required(updates: dict[str, str]) -> None:
+    with pytest.raises(FederalReserveIdentityError, match="unexpected_series_key"):
         parse_g19_zip(
-            _zip(_xml(**updates)),
+            _zip(_xml(_series(**updates))),
             [_identity()],
-            max_members=3,
+            max_members=5,
             max_uncompressed_bytes=10_000,
             release_date=None,
         )
 
 
-def test_path_traversal_member_is_rejected() -> None:
-    with pytest.raises(FederalReserveResponseError, match="unsafe member path"):
+def test_revolving_credit_requires_rev_dimension_independently() -> None:
+    revolving = _identity(
+        canonical_series_id="DTCTLR.M",
+        credit_type="REV",
+        description_keywords=["revolving", "consumer", "credit"],
+    )
+    with pytest.raises(FederalReserveIdentityError, match="unexpected_series_key"):
         parse_g19_zip(
-            _zip(_xml(), "../g19.xml"),
-            [_identity()],
-            max_members=3,
+            _zip(_xml(_series(SERIES_NAME="DTCTLR.M", CREDTYP="TOTAL"))),
+            [revolving],
+            max_members=5,
             max_uncompressed_bytes=10_000,
             release_date=None,
         )
 
 
-def test_member_and_uncompressed_size_limits_are_enforced() -> None:
-    with pytest.raises(FederalReserveResponseError, match="member limit"):
+def test_unknown_numeric_frequency_is_not_treated_as_monthly() -> None:
+    with pytest.raises(FederalReserveIdentityError, match="unexpected_series_key"):
         parse_g19_zip(
-            _zip(_xml()),
+            _zip(_xml(_series(FREQ="999"))),
             [_identity()],
-            max_members=0,
-            max_uncompressed_bytes=10_000,
-            release_date=None,
-        )
-    with pytest.raises(FederalReserveResponseError, match="size limit"):
-        parse_g19_zip(
-            _zip(_xml()),
-            [_identity()],
-            max_members=3,
-            max_uncompressed_bytes=5,
-            release_date=None,
-        )
-
-
-def test_malformed_xml_is_rejected() -> None:
-    with pytest.raises(FederalReserveResponseError, match="malformed"):
-        parse_g19_zip(
-            _zip("<Data>"),
-            [_identity()],
-            max_members=3,
+            max_members=5,
             max_uncompressed_bytes=10_000,
             release_date=None,
         )
 
 
 def test_one_release_independently_extracts_both_credit_series() -> None:
-    first = _xml()
-    second = _xml(SERIES="DTCTLR.M").removeprefix("<Data>").removesuffix("</Data>")
-    combined = first.removesuffix("</Data>") + second + "</Data>"
-    identities = [_identity(), _identity(canonical_series_id="DTCTLR.M")]
+    identities = [
+        _identity(),
+        _identity(canonical_series_id="DTCTLR.M", credit_type="REV"),
+    ]
+    body = _zip(
+        _xml(
+            _series(),
+            _series(SERIES_NAME="DTCTLR.M", CREDTYP="REV"),
+        )
+    )
 
     result = parse_g19_zip(
-        _zip(combined),
+        body,
         identities,
-        max_members=3,
+        max_members=5,
         max_uncompressed_bytes=10_000,
         release_date=None,
     )
@@ -151,17 +182,98 @@ def test_one_release_independently_extracts_both_credit_series() -> None:
     assert all(len(items) == 1 for items in result.values())
 
 
-def test_zip_with_ambiguous_multiple_xml_members_is_rejected() -> None:
+def test_exact_dataset_identity_is_required() -> None:
+    with pytest.raises(FederalReserveIdentityError, match="unexpected_release_dataset_identity"):
+        parse_g19_zip(
+            _zip(_xml(_series(), dataset="WRONG")),
+            [_identity()],
+            max_members=5,
+            max_uncompressed_bytes=10_000,
+            release_date=None,
+        )
+
+
+def test_real_archive_shape_selects_data_xml_among_structure_files() -> None:
+    result = parse_g19_zip(
+        _zip(_xml(_series())),
+        [_identity()],
+        max_members=5,
+        max_uncompressed_bytes=10_000,
+        release_date=None,
+    )
+
+    assert len(result["DTCTL.M"]) == 1
+
+
+def test_full_release_selects_ccout_and_ignores_other_datasets() -> None:
+    body = _zip(
+        '<MessageGroup><DataSet id="TERMS">'
+        f'{_series()}</DataSet><DataSet id="CCOUT">{_series()}</DataSet></MessageGroup>'
+    )
+
+    result = parse_g19_zip(
+        body,
+        [_identity()],
+        max_members=5,
+        max_uncompressed_bytes=10_000,
+        release_date=None,
+    )
+
+    assert len(result["DTCTL.M"]) == 1
+
+
+def test_missing_exact_data_member_is_rejected() -> None:
+    with pytest.raises(FederalReserveResponseError, match="exact XML data member"):
+        parse_g19_zip(
+            _zip(_xml(_series()), data_member="other.xml"),
+            [_identity()],
+            max_members=5,
+            max_uncompressed_bytes=10_000,
+            release_date=None,
+        )
+
+
+def test_path_traversal_member_is_rejected() -> None:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("one.xml", _xml())
-        archive.writestr("two.xml", _xml())
-
-    with pytest.raises(FederalReserveResponseError, match="exactly one XML"):
+        archive.writestr("G19_data.xml", _xml(_series()))
+        archive.writestr("../G19_struct.xml", "<Structure />")
+    with pytest.raises(FederalReserveResponseError, match="unsafe member path"):
         parse_g19_zip(
             buffer.getvalue(),
             [_identity()],
-            max_members=3,
+            max_members=5,
+            max_uncompressed_bytes=10_000,
+            release_date=None,
+        )
+
+
+def test_member_and_uncompressed_size_limits_are_enforced() -> None:
+    body = _zip(_xml(_series()))
+    with pytest.raises(FederalReserveResponseError, match="member limit"):
+        parse_g19_zip(
+            body,
+            [_identity()],
+            max_members=2,
+            max_uncompressed_bytes=10_000,
+            release_date=None,
+        )
+    with pytest.raises(FederalReserveResponseError, match="size limit"):
+        parse_g19_zip(
+            body,
+            [_identity()],
+            max_members=5,
+            max_uncompressed_bytes=5,
+            release_date=None,
+        )
+
+
+def test_malformed_data_xml_is_rejected() -> None:
+    with pytest.raises(FederalReserveResponseError, match="malformed"):
+        parse_g19_zip(
+            _zip("<MessageGroup>"),
+            [_identity()],
+            max_members=5,
             max_uncompressed_bytes=10_000,
             release_date=None,
         )

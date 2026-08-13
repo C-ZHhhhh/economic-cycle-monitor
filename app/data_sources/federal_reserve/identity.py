@@ -22,6 +22,14 @@ def federal_reserve_source_identity(
         "frequency": identity.frequency,
         "seasonal_adjustment": identity.seasonal_adjustment,
         "source_unit": identity.source_unit,
+        "data_member": identity.data_member,
+        "wire_frequency": identity.wire_frequency,
+        "data_representation": identity.data_representation,
+        "wire_unit": identity.wire_unit,
+        "unit_multiplier": identity.unit_multiplier,
+        "holder": identity.holder,
+        "credit_type": identity.credit_type,
+        "currency": identity.currency,
     }
 
 
