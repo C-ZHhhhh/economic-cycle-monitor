@@ -295,23 +295,19 @@ def test_fed_comparison_requires_exact_identity_and_base_evidence(
 
 
 @pytest.mark.integration
-def test_pending_fed_and_dol_mappings_cannot_be_compared(
+def test_pending_dol_mapping_cannot_be_compared(
     postgres_session: Session,
 ) -> None:
     seed_indicator_catalog(postgres_session, load_indicator_catalog())
 
-    for source, indicator_id in (
-        ("federal_reserve", "US_CONSUMER_CREDIT"),
-        ("dol", "US_INITIAL_CLAIMS"),
-    ):
-        summary = SourceComparisonService(postgres_session).compare(
-            SourceComparisonOptions(
-                indicator_id=indicator_id,
-                primary_source=source,
-                secondary_source="fred",
-            )
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_INITIAL_CLAIMS",
+            primary_source="dol",
+            secondary_source="fred",
         )
-        assert summary.indicator_count == 0
+    )
+    assert summary.indicator_count == 0
 
 
 @pytest.mark.integration

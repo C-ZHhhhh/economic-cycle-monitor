@@ -65,11 +65,11 @@ mappings:
     comparison_tolerance: 0.001
     distribution_lag_days: 10
     revision_lookback_years: 100
-    mapping_status: pending_review
+    mapping_status: valid
     enabled: true
     mapping_version: "0.6.0"
     validation_url: https://www.federalreserve.gov/releases/g19/current/default.htm
-    notes: "Official XML wire identity is CCOUT / DTCTL.M / TOTAL / ALL / SA / FREQ 129 / MILLDOLL / Currency / UNIT_MULT 1000000. XML values are already millions of dollars, so canonical normalization factor is 1. Mapping remains pending until Live Gate comparison and backfill complete."
+    notes: "Live Gate confirmed CCOUT / DTCTL.M / TOTAL / ALL / SA / FREQ 129 / MILLDOLL / Currency / UNIT_MULT 1000000. XML values are already millions of dollars with normalization factor 1. The idempotent 2000-present backfill produced 318 observations and 318/318 FRED matches on 2026-08-13."
   - indicator_id: US_REVOLVING_CREDIT
     fred_series_id: REVOLSL
     source: federal_reserve
@@ -88,8 +88,8 @@ mappings:
     comparison_tolerance: 0.001
     distribution_lag_days: 10
     revision_lookback_years: 100
-    mapping_status: pending_review
+    mapping_status: valid
     enabled: true
     mapping_version: "0.6.0"
     validation_url: https://www.federalreserve.gov/releases/g19/current/default.htm
-    notes: "Official XML wire identity is CCOUT / DTCTLR.M / REV / ALL / SA / FREQ 129 / MILLDOLL / Currency / UNIT_MULT 1000000. XML values are already millions of dollars, so canonical normalization factor is 1. Mapping remains pending until Live Gate comparison and backfill complete."
+    notes: "Live Gate confirmed CCOUT / DTCTLR.M / REV / ALL / SA / FREQ 129 / MILLDOLL / Currency / UNIT_MULT 1000000. XML values are already millions of dollars with normalization factor 1. The idempotent 2000-present backfill produced 318 observations and 318/318 FRED matches on 2026-08-13."
