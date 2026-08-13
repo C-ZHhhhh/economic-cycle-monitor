@@ -76,11 +76,8 @@ def test_fed_and_dol_candidates_remain_pending_until_independent_live_gates() ->
     assert statuses["US_MANUFACTURING_CAPACITY"] == "valid"
     assert statuses["US_CONSUMER_CREDIT"] == "valid"
     assert statuses["US_REVOLVING_CREDIT"] == "valid"
-    assert all(
-        status == "pending_review"
-        for indicator_id, status in statuses.items()
-        if indicator_id in {"US_INITIAL_CLAIMS", "US_CONTINUING_CLAIMS"}
-    )
+    assert statuses["US_INITIAL_CLAIMS"] == "valid_with_warning"
+    assert statuses["US_CONTINUING_CLAIMS"] == "pending_review"
     assert {item.source_series_id for item in fed.mappings} == {
         "IP.B50001.S",
         "CAPUTL.B00004.S",
