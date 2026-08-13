@@ -117,11 +117,17 @@ def test_production_fed_mapping_has_no_ddp_package_dependency() -> None:
         assert mapping.source_parameters["transport"] in {"official_text", "official_sdmx"}
 
 
-def test_dol_candidate_paths_are_not_guessed_before_live_gate() -> None:
+def test_dol_initial_claims_uses_live_discovered_paths_while_continued_is_pending() -> None:
     catalog = load_source_mapping_catalog_for("dol")
+    by_id = {item.indicator_id: item for item in catalog.mappings}
+    initial = by_id["US_INITIAL_CLAIMS"].source_parameters
+    continued = by_id["US_CONTINUING_CLAIMS"].source_parameters
 
-    for mapping in catalog.mappings:
-        parameters = mapping.source_parameters
-        assert parameters["row_path"] is None
-        assert parameters["observation_path"] is None
-        assert parameters["expected_wire_values"] == {}
+    assert initial["root_tag"] == "r539cyNational"
+    assert initial["row_path"] == "./week"
+    assert initial["observation_path"] == "weekEnded"
+    assert initial["value_path"] == "InitialClaims/SA"
+    assert initial["expected_wire_values"] == {"root_tag": ["r539cyNational"]}
+    assert continued["row_path"] is None
+    assert continued["observation_path"] is None
+    assert continued["expected_wire_values"] == {}

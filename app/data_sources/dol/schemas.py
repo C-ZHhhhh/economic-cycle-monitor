@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DolMappingIdentity(BaseModel):
-    """Strict candidate identity whose XML paths remain pending until Live Gate."""
+    """Strict National Weekly Claims report identity reviewed by the Live Gate."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -20,16 +20,14 @@ class DolMappingIdentity(BaseModel):
     seasonal_adjustment: Literal["SA"]
     frequency: Literal["W"]
     unit: Literal["persons"]
+    root_tag: str | None = None
     row_path: str | None = None
-    scope_path: str | None = None
-    program_path: str | None = None
-    concept_path: str | None = None
-    seasonal_path: str | None = None
-    frequency_path: str | None = None
-    unit_path: str | None = None
     observation_path: str | None = None
     value_path: str | None = None
-    release_date_path: str | None = None
+    observation_date_format: str = "%m/%d/%Y"
+    report_run_date_attribute: str | None = None
+    report_run_date_format: str = "%m/%d/%Y"
+    missing_value_markers: list[str] = Field(default_factory=lambda: [""])
     expected_wire_values: dict[str, list[str]] = Field(default_factory=dict)
     first_available_period: str
 

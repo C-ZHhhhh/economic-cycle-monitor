@@ -33,13 +33,14 @@ and requires review before YAML or stored observations change.
 
 | Indicator | Report | Required economic identity | Candidate path status |
 |---|---|---|---|
-| `US_INITIAL_CLAIMS` | National Weekly Claims `r539cy` | United States / Regular State Program / Initial Claims / SA / Weekly / Persons | Pending Live Gate |
+| `US_INITIAL_CLAIMS` | National Weekly Claims `r539cy` | `r539cyNational / week / weekEnded / InitialClaims/SA` | Schema confirmed; value/history Gate pending |
 | `US_CONTINUING_CLAIMS` | National Weekly Claims `r539cy` | United States / Regular State Program / Insured Unemployment official equivalent / SA / Weekly / Persons | Pending Live Gate |
 
-Production supports strict configured XML paths but deliberately leaves the candidate paths and
-wire values empty until the DOL Live Gate. It never guesses tags. Observation dates come from each
-series' week-ending field, not the release date. Operational outages and maintenance responses are
-classified as source degradation and do not change a mapping to invalid.
+The ICSA schema discovery confirmed the exact National report root, row, observation-date, and SA
+value paths. Empty future SA elements are missing observations and are never converted to zero.
+The root `rundate` is retained as report-generation metadata, not used as an observation or inferred
+release date. CCSA paths remain pending until the independent second Gate. Operational outages and
+maintenance responses remain source degradation and do not change a mapping to invalid.
 
 ETA 539 raw state data is not used as the production ICSA/CCSA series. It remains outside this
 stage's ingestion scope and may only be reviewed later as supporting or audit evidence.
