@@ -10,8 +10,8 @@ individually and never by implication from another provider or release.
 |---|---|---|---|---|
 | `US_INDUSTRIAL_PRODUCTION` | G.17 | `IP.B50001.S` (`B50001`) | Static `ip_sa.txt` plus current documentation | Validated configured base; currently 2017=100 |
 | `US_MANUFACTURING_CAPACITY` | G.17 | `CAPUTL.B00004.S` (`B00004`) | Static `utl_sa.txt` plus current documentation | Percent of capacity, identity |
-| `US_CONSUMER_CREDIT` | G.19 | `CCOUT / DTCTL.M` | Complete official XML/SDMX release | Board billions × 1000 to internal millions |
-| `US_REVOLVING_CREDIT` | G.19 | `CCOUT / DTCTLR.M` | Complete official XML/SDMX release | Board billions × 1000 to internal millions |
+| `US_CONSUMER_CREDIT` | G.19 | `CCOUT / DTCTL.M` | Complete official `FRB_g19_xml.zip` release | Board billions × 1000 to internal millions |
+| `US_REVOLVING_CREDIT` | G.19 | `CCOUT / DTCTLR.M` | Complete official `FRB_g19_xml.zip` release | Board billions × 1000 to internal millions |
 
 The runtime has no Data Download Program package identifier, package hash, or Build/Choose
 request. G.17 requires both canonical and transport identities. `B00004` is Manufacturing (SIC),

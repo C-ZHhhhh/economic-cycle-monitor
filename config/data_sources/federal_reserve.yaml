@@ -52,7 +52,7 @@ mappings:
     source: federal_reserve
     source_series_id: DTCTL.M
     source_dataset: G19
-    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTL.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: data/g19/g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [total, consumer, credit], first_available_period: "1943-01"}
+    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTL.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: releases/g19/data/FRB_g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [total, consumer, credit], first_available_period: "1943-01"}
     official_name: Total Consumer Credit Owned and Securitized
     source_unit: billions_dollars
     expected_unit: millions_dollars
@@ -75,7 +75,7 @@ mappings:
     source: federal_reserve
     source_series_id: DTCTLR.M
     source_dataset: G19
-    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTLR.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: data/g19/g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [revolving, consumer, credit], first_available_period: "1968-01"}
+    source_parameters: {mapping_type: DIRECT, release: G19, canonical_series_id: DTCTLR.M, transport: official_sdmx, transport_series_code: null, dataset: G19, group: CCOUT, representation: level, frequency: M, seasonal_adjustment: SA, source_unit: billions_dollars, expected_base_year: null, data_path: releases/g19/data/FRB_g19_xml.zip, documentation_path: releases/g19/current/default.htm, description_keywords: [revolving, consumer, credit], first_available_period: "1968-01"}
     official_name: Revolving Consumer Credit Owned and Securitized
     source_unit: billions_dollars
     expected_unit: millions_dollars
