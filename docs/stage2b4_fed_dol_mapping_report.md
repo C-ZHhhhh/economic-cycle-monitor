@@ -34,7 +34,7 @@ and requires review before YAML or stored observations change.
 | Indicator | Report | Required economic identity | Candidate path status |
 |---|---|---|---|
 | `US_INITIAL_CLAIMS` | National Weekly Claims `r539cy` | `r539cyNational / week / weekEnded / InitialClaims/SA` | `valid_with_warning`: identity/history exact; current source lag |
-| `US_CONTINUING_CLAIMS` | National Weekly Claims `r539cy` | `r539cyNational / week / weekEnded / ContinuedClaims/SA` | Schema confirmed; independent date/value/history Gate pending |
+| `US_CONTINUING_CLAIMS` | National Weekly Claims `r539cy` | `r539cyNational / week / weekEnded / ContinuedClaims/SA` | `valid_with_warning`: independent offset/history exact; current source lag |
 
 The ICSA schema discovery confirmed the exact National report root, row, observation-date, and SA
 value paths. Empty future SA elements are missing observations and are never converted to zero.

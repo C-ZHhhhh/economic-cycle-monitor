@@ -131,7 +131,7 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert dol_status.status_code == 200
     assert dol_status.json()["credentials_required"] is False
     assert dol_status.json()["registered_mapping_count"] == 2
-    assert dol_status.json()["pending_review_count"] == 1
+    assert dol_status.json()["pending_review_count"] == 0
     assert mappings.status_code == 200
     assert len(mappings.json()) == 5
     assert bea_mappings.status_code == 200

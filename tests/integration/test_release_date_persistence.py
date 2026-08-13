@@ -65,6 +65,11 @@ def test_release_date_round_trips_for_current_and_revision(
     )
     assert vintage is not None
     assert vintage.release_date == date(2026, 8, 13)
+    assert vintage.previous_value == Decimal("100")
+    assert vintage.current_value == Decimal("101")
+    assert vintage.revision_number == 1
+    postgres_session.refresh(current)
+    assert current.value == Decimal("101")
 
 
 def test_absent_release_date_round_trips_with_not_provided_status(

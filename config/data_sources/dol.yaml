@@ -42,8 +42,8 @@ mappings:
     comparison_tolerance: 0
     distribution_lag_days: 21
     revision_lookback_years: 5
-    mapping_status: pending_review
+    mapping_status: valid_with_warning
     enabled: true
     mapping_version: "0.6.1"
     validation_url: https://oui.doleta.gov/unemploy/claims.asp
-    notes: "Live schema discovery confirmed r539cyNational/week/weekEnded and ContinuedClaims/SA on 2026-08-13. The shared row-level weekEnded path is independently configured for CCSA and must pass its own FRED date-offset and history Gates before promotion."
+    notes: "Live Gate confirmed r539cyNational/week/weekEnded and ContinuedClaims/SA on 2026-08-13. Independent date-offset checks found offset 0 with 12/12 exact recent matches; the idempotent 2000-present backfill produced 1,386 observations with 1,386/1,386 exact FRED matches. Status retains a non-blocking warning because the DOL report currently trails FRED by one latest week during the source's published operational issue."

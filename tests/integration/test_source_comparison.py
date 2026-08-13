@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import SourceComparisonOptions
@@ -299,6 +300,19 @@ def test_pending_dol_mapping_cannot_be_compared(
     postgres_session: Session,
 ) -> None:
     seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    seed_source_mappings(postgres_session, load_source_mapping_catalog_for("dol"))
+    mappings = postgres_session.scalars(
+        select(IndicatorSourceMapping).where(
+            IndicatorSourceMapping.indicator_id == "US_CONTINUING_CLAIMS",
+            IndicatorSourceMapping.source == "dol",
+            IndicatorSourceMapping.enabled.is_(True),
+        )
+    ).all()
+    assert mappings
+    for mapping in mappings:
+        mapping.mapping_status = "pending_review"
+        mapping.metadata_checked_at = datetime.now(UTC)
+    postgres_session.flush()
 
     summary = SourceComparisonService(postgres_session).compare(
         SourceComparisonOptions(
