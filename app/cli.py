@@ -58,6 +58,10 @@ from app.source_mappings.config import (
     load_source_mapping_catalog_for,
 )
 from app.source_mappings.repository import seed_source_mappings
+from app.source_registry.audit import audit_materialized_policy, audit_source_registry
+from app.source_registry.config import load_source_registry
+from app.source_registry.health import indicator_source_health, provider_health
+from app.source_registry.readiness import validate_data_layer as validate_data_layer_service
 
 app = typer.Typer(
     name="economic-cycle-monitor",
@@ -196,20 +200,31 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
     try:
         with db_session(engine) as session:
             catalog = load_indicator_catalog()
-            run = start_sync_run(session, "seed_indicators", {}, len(catalog.indicators))
-            result = seed_indicator_catalog(session, catalog)
-            bls_mapping_result = seed_source_mappings(session, load_source_mapping_catalog())
+            registry = load_source_registry()
+            run = start_sync_run(
+                session,
+                "seed_indicators",
+                {
+                    "registry_policy_version": registry.registry_policy_version,
+                    "registry_hash": registry.registry_hash,
+                },
+                len(catalog.indicators),
+            )
+            result = seed_indicator_catalog(session, catalog, registry)
+            bls_mapping_result = seed_source_mappings(
+                session, load_source_mapping_catalog(), registry
+            )
             bea_mapping_result = seed_source_mappings(
-                session, load_source_mapping_catalog_for("bea")
+                session, load_source_mapping_catalog_for("bea"), registry
             )
             census_mapping_result = seed_source_mappings(
-                session, load_source_mapping_catalog_for("census")
+                session, load_source_mapping_catalog_for("census"), registry
             )
             fed_mapping_result = seed_source_mappings(
-                session, load_source_mapping_catalog_for("federal_reserve")
+                session, load_source_mapping_catalog_for("federal_reserve"), registry
             )
             dol_mapping_result = seed_source_mappings(
-                session, load_source_mapping_catalog_for("dol")
+                session, load_source_mapping_catalog_for("dol"), registry
             )
             summary = SyncSummary(
                 run_id=run.run_id,
@@ -230,6 +245,8 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
             finish_sync_run(session, run, summary)
             payload = {
                 "run_id": run.run_id,
+                "registry_policy_version": registry.registry_policy_version,
+                "registry_hash": registry.registry_hash,
                 **result.model_dump(),
                 "bls_mappings": bls_mapping_result.model_dump(),
                 "bea_mappings": bea_mapping_result.model_dump(),
@@ -242,6 +259,123 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
     finally:
         engine.dispose()
     _render(payload, json_output)
+
+
+@app.command("audit-source-registry")
+def audit_source_registry_command(
+    strict: bool = typer.Option(False, "--strict"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate registry completeness and database materialization drift."""
+    registry = load_source_registry()
+    result = audit_source_registry(
+        registry,
+        load_indicator_catalog(),
+        [
+            load_source_mapping_catalog_for(source)
+            for source in ("bls", "bea", "census", "federal_reserve", "dol")
+        ],
+    )
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        with db_session(engine) as session:
+            materialized = audit_materialized_policy(
+                registry, list(query_indicators(session, limit=100))
+            )
+    except (SQLAlchemyError, OSError, RuntimeError):
+        _fail("Source registry database audit failed")
+    finally:
+        engine.dispose()
+    payload = {
+        **result.model_dump(mode="json"),
+        "passed": result.passed and not materialized,
+        "materialized_issues": [item.model_dump(mode="json") for item in materialized],
+    }
+    _render(payload, json_output)
+    if strict and not payload["passed"]:
+        raise typer.Exit(code=1)
+
+
+@app.command("show-source-policy")
+def show_source_policy_command(
+    indicator: str,
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Show one versioned source-resolution policy without runtime secrets."""
+    registry = load_source_registry()
+    policy = registry.by_indicator().get(indicator)
+    if policy is None:
+        _fail("Unknown source registry indicator")
+    _render(
+        {
+            "registry_hash": registry.registry_hash,
+            **policy.model_dump(mode="json"),
+        },
+        json_output,
+    )
+
+
+@app.command("source-health")
+def source_health_command(
+    indicator: str | None = typer.Option(None, "--indicator"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Compute provider and indicator/source health from runtime evidence."""
+    settings = _load_settings()
+    registry = load_source_registry()
+    policies = registry.by_indicator()
+    if indicator is not None and indicator not in policies:
+        _fail("Unknown source registry indicator")
+    selected = [policies[indicator]] if indicator is not None else registry.policies
+    engine = create_database_engine(settings.database_url)
+    try:
+        with db_session(engine) as session:
+            provider_sources = sorted({policy.primary_source.value for policy in selected})
+            payload = {
+                "providers": [
+                    provider_health(
+                        session,
+                        {
+                            "FRED_CURRENT": "fred",
+                            "BLS": "bls",
+                            "BEA": "bea",
+                            "CENSUS": "census",
+                            "FEDERAL_RESERVE": "federal_reserve",
+                            "DOL": "dol",
+                        }[source],
+                    ).model_dump(mode="json")
+                    for source in provider_sources
+                ],
+                "indicators": [
+                    indicator_source_health(session, policy).model_dump(mode="json")
+                    for policy in selected
+                ],
+            }
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError):
+        _fail("Source health could not be computed")
+    finally:
+        engine.dispose()
+    _render(payload, json_output)
+
+
+@app.command("validate-data-layer")
+def validate_data_layer_command(
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Evaluate CURRENT_DATA_READY separately from PIT_BACKTEST_READY."""
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        with db_session(engine) as session:
+            result = validate_data_layer_service(session)
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError):
+        _fail("Data-layer readiness validation failed")
+    finally:
+        engine.dispose()
+    _render(result.model_dump(mode="json"), json_output)
+    if not result.current_data_ready:
+        raise typer.Exit(code=1)
 
 
 @app.command("list-indicators")

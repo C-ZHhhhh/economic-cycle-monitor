@@ -28,7 +28,7 @@ def test_bls_mapping_seed_is_idempotent_and_updates_source_priority(
     first = seed_source_mappings(postgres_session, catalog)
     second = seed_source_mappings(postgres_session, catalog)
 
-    assert first.inserted + first.unchanged == 14
+    assert first.inserted + first.updated + first.unchanged == 14
     assert second.unchanged == 14
     assert (
         postgres_session.scalar(
@@ -63,7 +63,7 @@ def test_bea_reviewed_mapping_seed_is_usable_and_becomes_primary(
     first = seed_source_mappings(postgres_session, catalog)
     second = seed_source_mappings(postgres_session, catalog)
 
-    assert first.inserted + first.unchanged == 5
+    assert first.inserted + first.updated + first.unchanged == 5
     assert second.unchanged == 5
     mappings = list(
         postgres_session.scalars(
@@ -123,3 +123,16 @@ def test_reviewed_census_direct_mapping_is_primary_eligible(
     assert indicator is not None
     assert indicator.primary_source == "census"
     assert get_active_source_mapping(postgres_session, "US_HOUSING_STARTS", "census") is not None
+
+
+def test_provider_seed_cannot_override_registry_primary_policy(
+    postgres_session: Session,
+) -> None:
+    """A transport catalog cannot own final source-resolution policy."""
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    indicator = get_indicator(postgres_session, "US_REAL_RETAIL_SALES")
+    assert indicator is not None
+    assert indicator.primary_source == "fred"
+    seed_source_mappings(postgres_session, load_source_mapping_catalog_for("census"))
+    assert indicator.primary_source == "fred"
+    assert indicator.primary_source_series_id == "RRSFS"

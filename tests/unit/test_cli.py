@@ -96,6 +96,10 @@ def test_every_stage_two_command_has_help() -> None:
         "backfill-dol",
         "sync-dol",
         "clear-dol-cache",
+        "audit-source-registry",
+        "show-source-policy",
+        "source-health",
+        "validate-data-layer",
     ]
 
     for command in commands:
@@ -109,3 +113,17 @@ def test_census_backfill_month_parser_is_exact() -> None:
 
     with pytest.raises(typer.BadParameter, match="YYYY-MM"):
         cli._parse_month("2000-01-15", "--start")
+
+
+def test_show_source_policy_is_secret_free_json() -> None:
+    result = runner.invoke(cli.app, ["show-source-policy", "US_REAL_GDP", "--json"])
+    assert result.exit_code == 0
+    assert '"primary_source": "BEA"' in result.stdout
+    assert '"registry_hash"' in result.stdout
+    assert "API_KEY" not in result.stdout
+
+
+def test_show_source_policy_rejects_unknown_indicator() -> None:
+    result = runner.invoke(cli.app, ["show-source-policy", "NOT_REAL"])
+    assert result.exit_code == 1
+    assert "Unknown source registry indicator" in result.stderr

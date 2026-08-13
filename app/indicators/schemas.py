@@ -25,17 +25,12 @@ class IndicatorDefinition(BaseModel):
     module: str
     owner_agent: str
     fred_series_id: str
-    primary_source: str
-    primary_source_series_id: str
-    fallback_source: str | None = None
     observation_frequency: str
-    release_frequency: str
     expected_unit: str
     expected_seasonal_adjustment: str
+    canonical_base_year: str | int | None = None
     direction: str
     weight: Decimal
-    max_staleness_days: int = Field(gt=0)
-    revision_policy: str
     enabled: bool
     config_version: str
     title_keywords: list[str] = Field(default_factory=list)
