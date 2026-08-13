@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import SourceComparisonOptions
@@ -209,3 +210,204 @@ def test_census_supporting_component_is_excluded_from_direct_comparison(
 
     assert summary.indicator_count == 0
     assert summary.results == []
+
+
+@pytest.mark.integration
+def test_fed_comparison_requires_exact_identity_and_base_evidence(
+    postgres_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    catalog = load_source_mapping_catalog_for("federal_reserve")
+    reviewed = catalog.model_copy(
+        update={
+            "mappings": [
+                item.model_copy(update={"mapping_status": "valid"})
+                if item.indicator_id == "US_INDUSTRIAL_PRODUCTION"
+                else item
+                for item in catalog.mappings
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        "app.data_pipeline.source_comparison.load_source_mapping_catalog_for",
+        lambda _source: reviewed,
+    )
+    seed_source_mappings(postgres_session, reviewed)
+    mapping = (
+        postgres_session.query(IndicatorSourceMapping)
+        .filter_by(source="federal_reserve", indicator_id="US_INDUSTRIAL_PRODUCTION")
+        .one()
+    )
+    mapping.mapping_status = "valid"
+    details = {
+        "canonical_series_id": "IP.B50001.S",
+        "frequency": "M",
+        "seasonal_adjustment": "SA",
+        "base_year": 2017,
+        "canonical_value": "100.0000000000",
+    }
+    postgres_session.add_all(
+        [
+            RawObservation(
+                indicator_id="US_INDUSTRIAL_PRODUCTION",
+                observation_date=date(2025, 1, 1),
+                value=Decimal("100"),
+                source="federal_reserve",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="b" * 64,
+                source_details_json=details,
+            ),
+            RawObservation(
+                indicator_id="US_INDUSTRIAL_PRODUCTION",
+                observation_date=date(2025, 1, 1),
+                value=Decimal("100"),
+                source="fred",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="f" * 64,
+            ),
+        ]
+    )
+    postgres_session.flush()
+
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_INDUSTRIAL_PRODUCTION",
+            primary_source="federal_reserve",
+            secondary_source="fred",
+        )
+    )
+    assert summary.results[0]["counts"] == {"match": 1}
+
+    observation = (
+        postgres_session.query(RawObservation)
+        .filter_by(source="federal_reserve", indicator_id="US_INDUSTRIAL_PRODUCTION")
+        .one()
+    )
+    observation.source_details_json = {**details, "base_year": 2022}
+    postgres_session.flush()
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_INDUSTRIAL_PRODUCTION",
+            primary_source="federal_reserve",
+            secondary_source="fred",
+        )
+    )
+    assert summary.results[0]["counts"] == {"normalization_mismatch": 1}
+
+
+@pytest.mark.integration
+def test_pending_dol_mapping_cannot_be_compared(
+    postgres_session: Session,
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    seed_source_mappings(postgres_session, load_source_mapping_catalog_for("dol"))
+    mappings = postgres_session.scalars(
+        select(IndicatorSourceMapping).where(
+            IndicatorSourceMapping.indicator_id == "US_CONTINUING_CLAIMS",
+            IndicatorSourceMapping.source == "dol",
+            IndicatorSourceMapping.enabled.is_(True),
+        )
+    ).all()
+    assert mappings
+    for mapping in mappings:
+        mapping.mapping_status = "pending_review"
+        mapping.metadata_checked_at = datetime.now(UTC)
+    postgres_session.flush()
+
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_CONTINUING_CLAIMS",
+            primary_source="dol",
+            secondary_source="fred",
+        )
+    )
+    assert summary.indicator_count == 0
+
+
+@pytest.mark.integration
+def test_g19_comparison_requires_auditable_wire_scale_and_identity_normalization(
+    postgres_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    catalog = load_source_mapping_catalog_for("federal_reserve")
+    reviewed = catalog.model_copy(
+        update={
+            "mappings": [
+                item.model_copy(update={"mapping_status": "valid"})
+                if item.indicator_id == "US_CONSUMER_CREDIT"
+                else item
+                for item in catalog.mappings
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        "app.data_pipeline.source_comparison.load_source_mapping_catalog_for",
+        lambda _source: reviewed,
+    )
+    seed_source_mappings(postgres_session, reviewed)
+    mapping = (
+        postgres_session.query(IndicatorSourceMapping)
+        .filter_by(source="federal_reserve", indicator_id="US_CONSUMER_CREDIT")
+        .one()
+    )
+    mapping.mapping_status = "valid"
+    details = {
+        "canonical_series_id": "DTCTL.M",
+        "frequency": "M",
+        "raw_frequency": "129",
+        "seasonal_adjustment": "SA",
+        "data_representation": "MILLDOLL",
+        "wire_unit": "Currency",
+        "unit_multiplier": "1000000",
+        "canonical_unit": "millions_usd",
+        "normalization_factor": "1",
+        "raw_value": "5166907.71",
+        "canonical_value": "5166907.71",
+    }
+    postgres_session.add_all(
+        [
+            RawObservation(
+                indicator_id="US_CONSUMER_CREDIT",
+                observation_date=date(2026, 6, 1),
+                value=Decimal("5166907.71"),
+                source="federal_reserve",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="b" * 64,
+                source_details_json=details,
+            ),
+            RawObservation(
+                indicator_id="US_CONSUMER_CREDIT",
+                observation_date=date(2026, 6, 1),
+                value=Decimal("5166907.71"),
+                source="fred",
+                retrieved_at=datetime.now(UTC),
+                raw_payload_hash="f" * 64,
+            ),
+        ]
+    )
+    postgres_session.flush()
+
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_CONSUMER_CREDIT",
+            primary_source="federal_reserve",
+            secondary_source="fred",
+        )
+    )
+    assert summary.results[0]["counts"] == {"match": 1}
+
+    observation = (
+        postgres_session.query(RawObservation)
+        .filter_by(source="federal_reserve", indicator_id="US_CONSUMER_CREDIT")
+        .one()
+    )
+    observation.source_details_json = {**details, "normalization_factor": "1000"}
+    postgres_session.flush()
+    summary = SourceComparisonService(postgres_session).compare(
+        SourceComparisonOptions(
+            indicator_id="US_CONSUMER_CREDIT",
+            primary_source="federal_reserve",
+            secondary_source="fred",
+        )
+    )
+    assert summary.results[0]["counts"] == {"normalization_mismatch": 1}

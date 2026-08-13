@@ -20,6 +20,8 @@ from agents.macro.service import create_mock_run as create_mock_run_service
 from app.data_pipeline.bea_service import BeaPipelineService
 from app.data_pipeline.bls_service import BlsPipelineService
 from app.data_pipeline.census_service import CensusPipelineService
+from app.data_pipeline.dol_service import DolPipelineService
+from app.data_pipeline.fed_service import FederalReservePipelineService
 from app.data_pipeline.repository import finish_sync_run, start_sync_run
 from app.data_pipeline.schemas import (
     BackfillOptions,
@@ -41,6 +43,8 @@ from app.data_quality.service import run_database_quality_checks
 from app.data_sources.bea.factory import create_bea_client
 from app.data_sources.bls.factory import create_bls_client
 from app.data_sources.census.factory import create_census_client
+from app.data_sources.dol.factory import create_dol_client
+from app.data_sources.federal_reserve.factory import create_federal_reserve_client
 from app.data_sources.fred.factory import create_fred_client
 from app.database.models import DataSourceRequest, IndicatorSourceMapping, SyncRun
 from app.database.session import check_database, create_database_engine, db_session
@@ -134,6 +138,16 @@ def _require_census_enabled(settings: Settings) -> None:
         _fail("Census API key is not configured")
 
 
+def _require_federal_reserve_enabled(settings: Settings) -> None:
+    if not settings.federal_reserve_enabled:
+        _fail("Federal Reserve is disabled; set FEDERAL_RESERVE_ENABLED=true")
+
+
+def _require_dol_enabled(settings: Settings) -> None:
+    if not settings.dol_enabled:
+        _fail("DOL is disabled; set DOL_ENABLED=true")
+
+
 @app.command("create-mock-run")
 def create_mock_run() -> None:
     """Create one validated mock run and report in PostgreSQL."""
@@ -191,6 +205,12 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
             census_mapping_result = seed_source_mappings(
                 session, load_source_mapping_catalog_for("census")
             )
+            fed_mapping_result = seed_source_mappings(
+                session, load_source_mapping_catalog_for("federal_reserve")
+            )
+            dol_mapping_result = seed_source_mappings(
+                session, load_source_mapping_catalog_for("dol")
+            )
             summary = SyncSummary(
                 run_id=run.run_id,
                 operation=run.operation,
@@ -203,6 +223,8 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
                     {"bls_mappings": bls_mapping_result.model_dump()},
                     {"bea_mappings": bea_mapping_result.model_dump()},
                     {"census_mappings": census_mapping_result.model_dump()},
+                    {"federal_reserve_mappings": fed_mapping_result.model_dump()},
+                    {"dol_mappings": dol_mapping_result.model_dump()},
                 ],
             )
             finish_sync_run(session, run, summary)
@@ -212,6 +234,8 @@ def seed_indicators(json_output: bool = typer.Option(False, "--json")) -> None:
                 "bls_mappings": bls_mapping_result.model_dump(),
                 "bea_mappings": bea_mapping_result.model_dump(),
                 "census_mappings": census_mapping_result.model_dump(),
+                "federal_reserve_mappings": fed_mapping_result.model_dump(),
+                "dol_mappings": dol_mapping_result.model_dump(),
             }
     except (SQLAlchemyError, OSError, RuntimeError, ValueError):
         _fail("Indicator catalog could not be synchronized")
@@ -716,6 +740,195 @@ def sync_census_command(
         raise typer.Exit(code=1)
 
 
+async def _run_validate_federal_reserve(
+    session: Session, settings: Settings, options: tuple[PipelineSelection, bool]
+) -> SyncSummary:
+    selection, dry_run = options
+    async with create_federal_reserve_client(settings) as client:
+        summary = await FederalReservePipelineService(session, settings, client).validate_mappings(
+            selection
+        )
+    if dry_run:
+        session.rollback()
+    return summary
+
+
+@app.command("validate-federal-reserve-mappings")
+def validate_federal_reserve_mappings_command(
+    indicator: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate Board release identities without promoting pending candidates."""
+    settings = _load_settings()
+    _require_federal_reserve_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_validate_federal_reserve,
+        (PipelineSelection(indicator_id=indicator, enabled_only=enabled_only), dry_run),
+        "Federal Reserve mapping validation failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+    if summary.failure_count:
+        raise typer.Exit(code=1)
+
+
+async def _run_federal_reserve_backfill(
+    session: Session, settings: Settings, options: BackfillOptions
+) -> SyncSummary:
+    async with create_federal_reserve_client(settings) as client:
+        return await FederalReservePipelineService(session, settings, client).backfill(options)
+
+
+@app.command("backfill-federal-reserve")
+def backfill_federal_reserve_command(
+    start: str = typer.Option("2000-01-01"),
+    end: str = typer.Option(date.today().isoformat()),
+    indicator: str | None = typer.Option(None),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Reconcile reviewed Board release histories without DDP packages."""
+    settings = _load_settings()
+    _require_federal_reserve_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_federal_reserve_backfill,
+        BackfillOptions(
+            indicator_id=indicator,
+            start=_parse_date(start, "--start"),
+            end=_parse_date(end, "--end"),
+            dry_run=dry_run,
+        ),
+        "Federal Reserve backfill failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+
+
+async def _run_federal_reserve_sync(
+    session: Session, settings: Settings, options: tuple[PipelineSelection, bool]
+) -> SyncSummary:
+    selection, dry_run = options
+    async with create_federal_reserve_client(settings) as client:
+        return await FederalReservePipelineService(session, settings, client).sync(
+            selection, dry_run=dry_run
+        )
+
+
+@app.command("sync-federal-reserve")
+def sync_federal_reserve_command(
+    indicator: str | None = typer.Option(None),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Synchronize reviewed Board G.17/G.19 mappings."""
+    settings = _load_settings()
+    _require_federal_reserve_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_federal_reserve_sync,
+        (PipelineSelection(indicator_id=indicator), dry_run),
+        "Federal Reserve sync failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+
+
+async def _run_validate_dol(
+    session: Session, settings: Settings, options: tuple[PipelineSelection, bool]
+) -> SyncSummary:
+    selection, dry_run = options
+    async with create_dol_client(settings) as client:
+        summary = await DolPipelineService(session, settings, client).validate_mappings(selection)
+    if dry_run:
+        session.rollback()
+    return summary
+
+
+@app.command("validate-dol-mappings")
+def validate_dol_mappings_command(
+    indicator: str | None = typer.Option(None),
+    enabled_only: bool = typer.Option(True, "--enabled-only/--all"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Collect DOL schema evidence while strict XML paths remain pending."""
+    settings = _load_settings()
+    _require_dol_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_validate_dol,
+        (PipelineSelection(indicator_id=indicator, enabled_only=enabled_only), dry_run),
+        "DOL mapping validation failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+
+
+async def _run_dol_backfill(
+    session: Session, settings: Settings, options: BackfillOptions
+) -> SyncSummary:
+    async with create_dol_client(settings) as client:
+        return await DolPipelineService(session, settings, client).backfill(options)
+
+
+@app.command("backfill-dol")
+def backfill_dol_command(
+    start: str = typer.Option("2000-01-01"),
+    end: str = typer.Option(date.today().isoformat()),
+    indicator: str | None = typer.Option(None),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Backfill only Live-reviewed DOL Weekly Claims mappings."""
+    settings = _load_settings()
+    _require_dol_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_dol_backfill,
+        BackfillOptions(
+            indicator_id=indicator,
+            start=_parse_date(start, "--start"),
+            end=_parse_date(end, "--end"),
+            dry_run=dry_run,
+        ),
+        "DOL backfill failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+
+
+async def _run_dol_sync(
+    session: Session,
+    settings: Settings,
+    options: tuple[PipelineSelection, bool, bool],
+) -> SyncSummary:
+    selection, dry_run, annual_reconciliation = options
+    async with create_dol_client(settings) as client:
+        return await DolPipelineService(session, settings, client).sync(
+            selection,
+            dry_run=dry_run,
+            annual_reconciliation=annual_reconciliation,
+        )
+
+
+@app.command("sync-dol")
+def sync_dol_command(
+    indicator: str | None = typer.Option(None),
+    dry_run: bool = typer.Option(False),
+    annual_reconciliation: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Synchronize the configured DOL revision/reconciliation window."""
+    settings = _load_settings()
+    _require_dol_enabled(settings)
+    summary = _execute_async_pipeline(
+        settings,
+        _run_dol_sync,
+        (PipelineSelection(indicator_id=indicator), dry_run, annual_reconciliation),
+        "DOL sync failed",
+    )
+    _render(summary.model_dump(mode="json"), json_output)
+
+
 @app.command("sync-bls")
 def sync_bls_command(
     indicator: str | None = typer.Option(None),
@@ -757,8 +970,21 @@ def compare_sources_command(
     """Compare independently stored official and FRED observations in pages."""
     primary_source = primary.lower()
     secondary_source = secondary.lower()
-    if primary_source not in {"bls", "bea", "census"} or secondary_source != "fred":
-        _fail("Supported comparisons use --primary bls|bea|census --secondary fred")
+    if (
+        primary_source
+        not in {
+            "bls",
+            "bea",
+            "census",
+            "federal_reserve",
+            "dol",
+        }
+        or secondary_source != "fred"
+    ):
+        _fail(
+            "Supported comparisons use --primary "
+            "bls|bea|census|federal_reserve|dol --secondary fred"
+        )
     settings = _load_settings()
     engine = create_database_engine(settings.database_url)
     try:
@@ -792,6 +1018,7 @@ PipelineOptions = (
     | CensusSyncOptions
     | tuple[str, date]
     | tuple[PipelineSelection, bool]
+    | tuple[PipelineSelection, bool, bool]
 )
 
 
@@ -897,8 +1124,8 @@ def show_source_status_command(
 ) -> None:
     """Show secret-free official-source configuration, mapping, and request status."""
     normalized = source.lower()
-    if normalized not in {"bls", "bea", "census"}:
-        _fail("Source status supports only BLS, BEA, and Census")
+    if normalized not in {"bls", "bea", "census", "federal_reserve", "dol"}:
+        _fail("Unsupported official source")
     settings = _load_settings()
     engine = create_database_engine(settings.database_url)
     try:
@@ -913,7 +1140,12 @@ def show_source_status_command(
             payload = {
                 "source": normalized,
                 "enabled": getattr(settings, f"{normalized}_enabled"),
-                "api_key_configured": getattr(settings, f"{normalized}_api_key") is not None,
+                "credentials_required": normalized not in {"federal_reserve", "dol"},
+                "api_key_configured": (
+                    getattr(settings, f"{normalized}_api_key") is not None
+                    if normalized not in {"federal_reserve", "dol"}
+                    else False
+                ),
                 "base_url": str(getattr(settings, f"{normalized}_base_url")),
                 "mapping_count": len(mappings),
                 "mapping_status_counts": {
@@ -989,6 +1221,29 @@ def clear_census_cache_command() -> None:
     if target.exists():
         shutil.rmtree(target)
     typer.echo("OK: Census cache is clear")
+
+
+def _clear_public_cache(source: str) -> None:
+    settings = _load_settings()
+    target = (settings.cache_dir / source).resolve()
+    cache_root = settings.cache_dir.resolve()
+    if target.parent != cache_root:
+        _fail("Configured cache path is unsafe")
+    if target.exists():
+        shutil.rmtree(target)
+    typer.echo(f"OK: {source} cache is clear")
+
+
+@app.command("clear-federal-reserve-cache")
+def clear_federal_reserve_cache_command() -> None:
+    """Remove only the configured Board release cache directory."""
+    _clear_public_cache("federal_reserve")
+
+
+@app.command("clear-dol-cache")
+def clear_dol_cache_command() -> None:
+    """Remove only the configured DOL cache directory."""
+    _clear_public_cache("dol")
 
 
 if __name__ == "__main__":

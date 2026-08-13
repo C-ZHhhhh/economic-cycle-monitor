@@ -81,6 +81,26 @@ class Settings(BaseSettings):
     census_cache_ttl_seconds: int = Field(default=3600, ge=0)
     census_year_batch_size: int = Field(default=5, ge=1, le=20)
     census_default_backfill_start_year: int = Field(default=2000, ge=1959, le=2100)
+    federal_reserve_enabled: bool = False
+    federal_reserve_base_url: HttpUrl = HttpUrl("https://www.federalreserve.gov")
+    federal_reserve_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    federal_reserve_max_retries: int = Field(default=3, ge=0, le=8)
+    federal_reserve_retry_base_seconds: float = Field(default=1.0, ge=0, le=30)
+    federal_reserve_cache_enabled: bool = True
+    federal_reserve_cache_ttl_seconds: int = Field(default=3600, ge=0)
+    federal_reserve_zip_max_members: int = Field(default=128, ge=1, le=1000)
+    federal_reserve_zip_max_uncompressed_bytes: int = Field(
+        default=64 * 1024 * 1024, ge=1024, le=512 * 1024 * 1024
+    )
+    dol_enabled: bool = False
+    dol_base_url: HttpUrl = HttpUrl("https://oui.doleta.gov")
+    dol_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    dol_max_retries: int = Field(default=3, ge=0, le=8)
+    dol_retry_base_seconds: float = Field(default=1.0, ge=0, le=30)
+    dol_cache_enabled: bool = True
+    dol_cache_ttl_seconds: int = Field(default=3600, ge=0)
+    dol_recent_observation_periods: int = Field(default=2, ge=2, le=12)
+    dol_annual_reconciliation_years: int = Field(default=5, ge=1, le=10)
 
     fetch_concurrency: int = Field(default=4, ge=1, le=16)
     per_source_fetch_concurrency: int = Field(default=2, ge=1, le=8)
@@ -142,6 +162,14 @@ class Settings(BaseSettings):
             "census_base_url": str(self.census_base_url),
             "census_cache_enabled": self.census_cache_enabled,
             "census_cache_ttl_seconds": self.census_cache_ttl_seconds,
+            "federal_reserve_enabled": self.federal_reserve_enabled,
+            "federal_reserve_base_url": str(self.federal_reserve_base_url),
+            "federal_reserve_cache_enabled": self.federal_reserve_cache_enabled,
+            "federal_reserve_cache_ttl_seconds": self.federal_reserve_cache_ttl_seconds,
+            "dol_enabled": self.dol_enabled,
+            "dol_base_url": str(self.dol_base_url),
+            "dol_cache_enabled": self.dol_cache_enabled,
+            "dol_cache_ttl_seconds": self.dol_cache_ttl_seconds,
             "fetch_concurrency": self.fetch_concurrency,
             "per_source_fetch_concurrency": self.per_source_fetch_concurrency,
             "analysis_concurrency": self.analysis_concurrency,

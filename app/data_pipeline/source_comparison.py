@@ -110,7 +110,7 @@ class SourceComparisonService:
 
     def _select_mappings(self, options: SourceComparisonOptions) -> list[IndicatorSourceMapping]:
         if (
-            options.primary_source not in {"bls", "bea", "census"}
+            options.primary_source not in {"bls", "bea", "census", "federal_reserve", "dol"}
             or options.secondary_source != "fred"
         ):
             return []
@@ -214,7 +214,27 @@ class SourceComparisonService:
                 source=options.primary_source,
                 message="Census comparison lacks exact identity, scale, or precision evidence",
             )
-        elif mapping.normalization_rule not in {"identity", "bea_unit_multiplier"}:
+        elif (
+            options.primary_source in {"federal_reserve", "dol"}
+            and primary is not None
+            and not self._public_release_identity_is_auditable(
+                primary, definition, options.primary_source
+            )
+        ):
+            status = "normalization_mismatch"
+            issue = official_source_issue(
+                indicator.indicator_id,
+                event_type=status,
+                severity="error",
+                source=options.primary_source,
+                message="Source comparison lacks exact identity, period, unit, or base evidence",
+            )
+        elif mapping.normalization_rule not in {
+            "identity",
+            "bea_unit_multiplier",
+            "billions_to_millions",
+            "identity_with_validated_base",
+        }:
             status = "not_comparable"
             issue = official_source_issue(
                 indicator.indicator_id,
@@ -377,6 +397,52 @@ class SourceComparisonService:
             return Decimal(str(details["canonical_value"])) == Decimal(observation.value)
         except (ArithmeticError, ValueError):
             return False
+
+    @staticmethod
+    def _public_release_identity_is_auditable(
+        observation: RawObservation,
+        definition: SourceMappingDefinition,
+        source: str,
+    ) -> bool:
+        """Require exact release identity evidence before Board/DOL comparisons."""
+        details = observation.source_details_json
+        try:
+            if Decimal(str(details.get("canonical_value"))) != Decimal(observation.value):
+                return False
+        except (ArithmeticError, ValueError):
+            return False
+        if source == "federal_reserve":
+            parameters = definition.source_parameters
+            if details.get("canonical_series_id") != definition.source_series_id:
+                return False
+            if details.get("frequency") != parameters.get("frequency"):
+                return False
+            if details.get("seasonal_adjustment") != parameters.get("seasonal_adjustment"):
+                return False
+            if parameters.get("release") == "G19":
+                expected_wire = {
+                    "raw_frequency": parameters.get("wire_frequency"),
+                    "data_representation": parameters.get("data_representation"),
+                    "wire_unit": parameters.get("wire_unit"),
+                    "unit_multiplier": parameters.get("unit_multiplier"),
+                    "canonical_unit": definition.source_unit,
+                    "normalization_factor": "1",
+                }
+                if any(details.get(key) != value for key, value in expected_wire.items()):
+                    return False
+                try:
+                    raw_value = Decimal(str(details.get("raw_value")))
+                    canonical_value = Decimal(str(details.get("canonical_value")))
+                except (ArithmeticError, ValueError):
+                    return False
+                if raw_value != canonical_value or canonical_value != Decimal(observation.value):
+                    return False
+            expected_base = parameters.get("expected_base_year")
+            return expected_base is None or details.get("base_year") == expected_base
+        return all(
+            details.get(field)
+            for field in ("scope", "program", "concept", "seasonal_adjustment", "frequency")
+        )
 
 
 def list_source_comparisons(

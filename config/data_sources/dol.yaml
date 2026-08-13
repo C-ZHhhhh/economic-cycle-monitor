@@ -1,0 +1,49 @@
+schema_version: "0.6.1"
+source: dol
+mappings:
+  - indicator_id: US_INITIAL_CLAIMS
+    fred_series_id: ICSA
+    source: dol
+    source_series_id: r539cy:initial_claims:sa
+    source_dataset: r539cy
+    source_parameters: {mapping_type: DIRECT, report: r539cy, scope: us, program: regular_state, series_concept: initial_claims, seasonal_adjustment: SA, frequency: W, unit: persons, root_tag: r539cyNational, row_path: "./week", observation_path: weekEnded, value_path: InitialClaims/SA, observation_date_format: "%m/%d/%Y", report_run_date_attribute: rundate, report_run_date_format: "%m/%d/%Y", missing_value_markers: [""], expected_wire_values: {root_tag: [r539cyNational]}, first_available_period: "1967-01-07"}
+    official_name: Initial Claims, Regular State Program, United States, Seasonally Adjusted
+    source_unit: persons
+    expected_unit: number
+    expected_frequency: weekly
+    expected_seasonal_adjustment: seasonally_adjusted
+    source_priority: 1
+    fallback_source: fred
+    vintage_source: alfred
+    normalization_rule: identity
+    comparison_tolerance: 0
+    distribution_lag_days: 14
+    revision_lookback_years: 2
+    mapping_status: valid_with_warning
+    enabled: true
+    mapping_version: "0.6.1"
+    validation_url: https://oui.doleta.gov/unemploy/claims.asp
+    notes: "Live Gate confirmed r539cyNational/week/weekEnded and InitialClaims/SA on 2026-08-13. The idempotent 2000-present backfill produced 1,386 observations with 1,386/1,386 exact FRED matches. Status retains a non-blocking warning because the DOL report currently trails FRED by two latest weeks during the source's published operational issue."
+  - indicator_id: US_CONTINUING_CLAIMS
+    fred_series_id: CCSA
+    source: dol
+    source_series_id: r539cy:insured_unemployment:sa
+    source_dataset: r539cy
+    source_parameters: {mapping_type: DIRECT, report: r539cy, scope: us, program: regular_state, series_concept: insured_unemployment, seasonal_adjustment: SA, frequency: W, unit: persons, root_tag: r539cyNational, row_path: "./week", observation_path: weekEnded, value_path: ContinuedClaims/SA, observation_date_format: "%m/%d/%Y", report_run_date_attribute: rundate, report_run_date_format: "%m/%d/%Y", missing_value_markers: [""], expected_wire_values: {root_tag: [r539cyNational]}, first_available_period: "1967-01-07"}
+    official_name: Insured Unemployment, Regular State Program, United States, Seasonally Adjusted
+    source_unit: persons
+    expected_unit: number
+    expected_frequency: weekly
+    expected_seasonal_adjustment: seasonally_adjusted
+    source_priority: 1
+    fallback_source: fred
+    vintage_source: alfred
+    normalization_rule: identity
+    comparison_tolerance: 0
+    distribution_lag_days: 21
+    revision_lookback_years: 5
+    mapping_status: valid_with_warning
+    enabled: true
+    mapping_version: "0.6.1"
+    validation_url: https://oui.doleta.gov/unemploy/claims.asp
+    notes: "Live Gate confirmed r539cyNational/week/weekEnded and ContinuedClaims/SA on 2026-08-13. Independent date-offset checks found offset 0 with 12/12 exact recent matches; the idempotent 2000-present backfill produced 1,386 observations with 1,386/1,386 exact FRED matches. Status retains a non-blocking warning because the DOL report currently trails FRED by one latest week during the source's published operational issue."

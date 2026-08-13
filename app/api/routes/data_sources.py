@@ -235,3 +235,75 @@ def census_status(request: Request, session: SessionDependency) -> dict[str, Any
         "latest_success": _request_summary(latest_success),
         "latest_failure": _request_summary(latest_failure),
     }
+
+
+def _public_source_status(
+    session: Session,
+    *,
+    source: str,
+    enabled: bool,
+    base_url: str,
+    cache_enabled: bool,
+    cache_ttl_seconds: int,
+) -> dict[str, Any]:
+    """Build a shared credential-free status for public official file sources."""
+    latest_success = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == source, DataSourceRequest.success.is_(True))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    latest_failure = session.scalar(
+        select(DataSourceRequest)
+        .where(DataSourceRequest.source == source, DataSourceRequest.success.is_(False))
+        .order_by(DataSourceRequest.finished_at.desc())
+        .limit(1)
+    )
+    rows = session.scalars(
+        select(IndicatorSourceMapping).where(
+            IndicatorSourceMapping.source == source,
+            IndicatorSourceMapping.enabled.is_(True),
+        )
+    ).all()
+    return {
+        "enabled": enabled,
+        "configured": True,
+        "credentials_required": False,
+        "base_url": base_url,
+        "cache": {"enabled": cache_enabled, "ttl_seconds": cache_ttl_seconds},
+        "registered_mapping_count": len(rows),
+        "usable_mapping_count": sum(
+            item.mapping_status in {"valid", "valid_with_warning"} for item in rows
+        ),
+        "pending_review_count": sum(item.mapping_status == "pending_review" for item in rows),
+        "latest_success": _request_summary(latest_success),
+        "latest_failure": _request_summary(latest_failure),
+    }
+
+
+@router.get("/federal-reserve/status")
+def federal_reserve_status(request: Request, session: SessionDependency) -> dict[str, Any]:
+    """Report public Board release configuration and reviewed mapping counts."""
+    settings = request.app.state.settings
+    return _public_source_status(
+        session,
+        source="federal_reserve",
+        enabled=settings.federal_reserve_enabled,
+        base_url=str(settings.federal_reserve_base_url),
+        cache_enabled=settings.federal_reserve_cache_enabled,
+        cache_ttl_seconds=settings.federal_reserve_cache_ttl_seconds,
+    )
+
+
+@router.get("/dol/status")
+def dol_status(request: Request, session: SessionDependency) -> dict[str, Any]:
+    """Report public DOL Weekly Claims configuration and mapping counts."""
+    settings = request.app.state.settings
+    return _public_source_status(
+        session,
+        source="dol",
+        enabled=settings.dol_enabled,
+        base_url=str(settings.dol_base_url),
+        cache_enabled=settings.dol_cache_enabled,
+        cache_ttl_seconds=settings.dol_cache_ttl_seconds,
+    )
