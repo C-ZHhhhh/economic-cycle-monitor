@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.data_pipeline.fed_service import FederalReservePipelineService
 from app.data_sources.federal_reserve.exceptions import (
     FederalReserveIdentityError,
     FederalReserveResponseError,
@@ -104,6 +105,12 @@ def test_real_series_key_preserves_decimal_and_uses_identity_normalization() -> 
     assert result[0].details["normalization_factor"] == "1"
     assert result[0].details["source_identity"]["unit_multiplier"] == "1000000"
     assert len(result[0].details["source_identity_hash"]) == 64
+
+
+def test_named_g19_release_date_is_read_from_human_release_html() -> None:
+    html = "<div>Release Date:</div><strong>August 7, 2026</strong>"
+
+    assert FederalReservePipelineService._release_date(html) == date(2026, 8, 7)
 
 
 @pytest.mark.parametrize(

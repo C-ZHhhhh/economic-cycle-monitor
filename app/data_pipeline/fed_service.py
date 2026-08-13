@@ -1,8 +1,10 @@
 """Federal Reserve Board mapping validation and release reconciliation."""
 
 import re
+from calendar import month_name
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
+from html import unescape
 
 from sqlalchemy.orm import Session
 
@@ -36,6 +38,10 @@ from app.source_mappings.schemas import SourceMappingDefinition
 
 Selected = tuple[IndicatorRegistry, IndicatorSourceMapping, SourceMappingDefinition]
 _DATE = re.compile(r"(20\d{2})[-/]([01]?\d)[-/]([0-3]?\d)")
+_NAMED_RELEASE_DATE = re.compile(
+    r"release\s+date\s*:?\s*([A-Za-z]+)\s+([0-3]?\d),\s*(20\d{2})",
+    re.IGNORECASE,
+)
 
 
 class FederalReservePipelineService:
@@ -240,5 +246,12 @@ class FederalReservePipelineService:
 
     @staticmethod
     def _release_date(text: str) -> date | None:
-        match = _DATE.search(text)
+        normalized = " ".join(unescape(re.sub(r"<[^>]+>", " ", text)).split())
+        named = _NAMED_RELEASE_DATE.search(normalized)
+        if named:
+            months = {name.casefold(): number for number, name in enumerate(month_name) if name}
+            month = months.get(named.group(1).casefold())
+            if month is not None:
+                return date(int(named.group(3)), month, int(named.group(2)))
+        match = _DATE.search(normalized)
         return date(*(int(match.group(index)) for index in (1, 2, 3))) if match else None
