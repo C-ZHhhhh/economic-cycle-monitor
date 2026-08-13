@@ -39,7 +39,7 @@ from app.source_mappings.schemas import SourceMappingDefinition
 Selected = tuple[IndicatorRegistry, IndicatorSourceMapping, SourceMappingDefinition]
 _DATE = re.compile(r"(20\d{2})[-/]([01]?\d)[-/]([0-3]?\d)")
 _NAMED_RELEASE_DATE = re.compile(
-    r"release\s+date\s*:?\s*([A-Za-z]+)\s+([0-3]?\d),\s*(20\d{2})",
+    r"release\s+date\s*\*?\s*:?\s*([A-Za-z]+)\s+([0-3]?\d),\s*(20\d{2})",
     re.IGNORECASE,
 )
 

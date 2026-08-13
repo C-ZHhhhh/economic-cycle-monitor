@@ -108,7 +108,7 @@ def test_real_series_key_preserves_decimal_and_uses_identity_normalization() -> 
 
 
 def test_named_g19_release_date_is_read_from_human_release_html() -> None:
-    html = "<div>Release Date:</div><strong>August 7, 2026</strong>"
+    html = "<div>Release Date * :</div><strong>August 7, 2026</strong>"
 
     assert FederalReservePipelineService._release_date(html) == date(2026, 8, 7)
 
