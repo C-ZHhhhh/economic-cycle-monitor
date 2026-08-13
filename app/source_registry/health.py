@@ -53,6 +53,11 @@ def expected_latest_period(policy: SourceRegistryPolicy, *, today: date) -> date
     return candidate.replace(month=quarter_month, day=1) - relativedelta(months=3)
 
 
+def expected_period_due_date(policy: SourceRegistryPolicy, expected_period: date) -> date:
+    """Return the approximate due date for an expected observation period."""
+    return expected_period + timedelta(days=policy.freshness.expected_lag_days)
+
+
 def _latest_request(
     session: Session, source: str, *, success: bool | None = None
 ) -> DataSourceRequest | None:
@@ -167,8 +172,8 @@ def indicator_source_health(
         state = RuntimeHealth.UNAVAILABLE
         reasons.append("NO_PRIMARY_OBSERVATIONS")
     elif latest_date < expected:
-        gap_days = (expected - latest_date).days
-        if gap_days <= policy.freshness.grace_days:
+        overdue_days = (evaluation_date - expected_period_due_date(policy, expected)).days
+        if overdue_days <= policy.freshness.grace_days:
             state = RuntimeHealth.DEGRADED
             reasons.append("EXPECTED_PERIOD_LAG_WITHIN_GRACE")
         else:

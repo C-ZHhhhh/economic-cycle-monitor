@@ -16,7 +16,11 @@ from app.source_mappings.config import (
 )
 from app.source_registry.audit import audit_source_registry
 from app.source_registry.config import load_source_registry
-from app.source_registry.health import expected_latest_period, mapping_quality_from_status
+from app.source_registry.health import (
+    expected_latest_period,
+    expected_period_due_date,
+    mapping_quality_from_status,
+)
 from app.source_registry.resolver import PITGranularityUnsupported, get_effective_observations
 from app.source_registry.schemas import (
     MappingQuality,
@@ -240,6 +244,15 @@ def test_expected_period_uses_frequency_and_release_lag(
     assert expected_latest_period(by_id["US_INITIAL_CLAIMS"], today=date(2026, 8, 13)) == date(
         2026, 8, 8
     )
+
+
+def test_freshness_grace_starts_at_expected_release_not_period_start(
+    registry: SourceRegistryCatalog,
+) -> None:
+    policy = registry.by_indicator()["US_CPI"]
+    expected = expected_latest_period(policy, today=date(2026, 8, 13))
+    assert expected == date(2026, 7, 1)
+    assert expected_period_due_date(policy, expected) == date(2026, 8, 5)
 
 
 @pytest.mark.parametrize(

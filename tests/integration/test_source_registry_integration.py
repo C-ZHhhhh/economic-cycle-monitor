@@ -143,6 +143,20 @@ def test_dol_lag_is_runtime_degraded_not_mapping_warning(
     assert snapshot.reasons == ["EXPECTED_PERIOD_LAG_WITHIN_GRACE"]
 
 
+def test_monthly_grace_is_measured_after_expected_release_date(
+    postgres_session: Session,
+) -> None:
+    registry = _seed_all(postgres_session)
+    policy = registry.by_indicator()["US_CPI"]
+    _observation(postgres_session, policy.indicator_id, "bls", date(2098, 6, 1))
+    _request(postgres_session, "bls", datetime(2098, 8, 13, tzinfo=UTC))
+    postgres_session.flush()
+    snapshot = indicator_source_health(postgres_session, policy, today=date(2098, 8, 13))
+    assert snapshot.expected_latest_period == date(2098, 7, 1)
+    assert snapshot.runtime_health is RuntimeHealth.DEGRADED
+    assert snapshot.reasons == ["EXPECTED_PERIOD_LAG_WITHIN_GRACE"]
+
+
 def test_current_resolver_uses_healthy_primary(postgres_session: Session) -> None:
     registry = _seed_all(postgres_session)
     _observation(postgres_session, "US_CPI", "bls", date(2024, 1, 1), "300")
