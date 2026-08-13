@@ -302,7 +302,7 @@ def test_pending_dol_mapping_cannot_be_compared(
 
     summary = SourceComparisonService(postgres_session).compare(
         SourceComparisonOptions(
-            indicator_id="US_INITIAL_CLAIMS",
+            indicator_id="US_CONTINUING_CLAIMS",
             primary_source="dol",
             secondary_source="fred",
         )

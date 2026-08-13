@@ -53,7 +53,7 @@ def _fed(tmp_path: Path, handler: httpx.MockTransport) -> FederalReserveClient:
     )
 
 
-async def test_dol_operational_degradation_keeps_mapping_pending_and_emits_quality_event(
+async def test_dol_operational_degradation_does_not_downgrade_reviewed_mapping(
     postgres_session: Session, settings: Settings, tmp_path: Path
 ) -> None:
     seed_indicator_catalog(postgres_session, load_indicator_catalog())
@@ -72,7 +72,7 @@ async def test_dol_operational_degradation_keeps_mapping_pending_and_emits_quali
         )
     )
     assert mapping is not None
-    assert mapping.mapping_status == "pending_review"
+    assert mapping.mapping_status == "valid_with_warning"
     assert summary.errors[0].error_type == "source_operational_degradation"
     issue = postgres_session.scalar(
         select(DataQualityEvent).where(
