@@ -14,6 +14,10 @@ from app.data_sources.federal_reserve.g17 import (
     parse_g17_text,
     validate_g17_identity,
 )
+from app.data_sources.federal_reserve.identity import (
+    federal_reserve_source_identity,
+    federal_reserve_source_identity_hash,
+)
 from app.data_sources.federal_reserve.schemas import FederalReserveMappingIdentity
 
 
@@ -78,6 +82,61 @@ def test_capacity_series_cannot_match_utilization_target() -> None:
         validate_g17_identity(utilization, "Manufacturing (NAICS) GMF", "release")
 
 
+def test_cumfns_requires_sic_utilization_and_rejects_naics_transport() -> None:
+    sic = _identity(
+        canonical_series_id="CAPUTL.B00004.S",
+        transport_series_code="B00004",
+        representation="utilization",
+        source_unit="percent",
+        expected_base_year=None,
+        description_keywords=["manufacturing", "sic"],
+    )
+    documentation = "Manufacturing (SIC) B00004\nManufacturing (NAICS) GMF"
+
+    base, _ = validate_g17_identity(sic, documentation, "release")
+
+    assert base is None
+    naics = sic.model_copy(
+        update={
+            "canonical_series_id": "CAPUTL.GMF.S",
+            "transport_series_code": "GMF",
+            "description_keywords": ["manufacturing", "naics"],
+        }
+    )
+    validate_g17_identity(naics, documentation, "release")
+    misidentified_cumfns = naics.model_copy(
+        update={"description_keywords": ["manufacturing", "sic"]}
+    )
+    with pytest.raises(FederalReserveIdentityError, match="unexpected_series_description"):
+        validate_g17_identity(misidentified_cumfns, documentation, "release")
+
+
+def test_gmf_to_b00004_changes_transparent_source_identity_hash() -> None:
+    sic = _identity(
+        canonical_series_id="CAPUTL.B00004.S",
+        transport_series_code="B00004",
+        representation="utilization",
+        source_unit="percent",
+        expected_base_year=None,
+        description_keywords=["manufacturing", "sic"],
+    )
+    naics = sic.model_copy(
+        update={
+            "canonical_series_id": "CAPUTL.GMF.S",
+            "transport_series_code": "GMF",
+        }
+    )
+
+    sic_identity = federal_reserve_source_identity(sic)
+    naics_identity = federal_reserve_source_identity(naics)
+
+    assert sic_identity["transport_series_code"] == "B00004"
+    assert naics_identity["transport_series_code"] == "GMF"
+    assert federal_reserve_source_identity_hash(sic_identity) != (
+        federal_reserve_source_identity_hash(naics_identity)
+    )
+
+
 def test_text_parser_preserves_decimal_missing_and_release_date() -> None:
     body = b'"B50001" 2025 100.00000000000001 . 102 103 104 105 106 107 108 109 110 111\n'
     observations = parse_g17_text(body, _identity(), base_year=2017, release_date=date(2026, 1, 15))
@@ -85,6 +144,8 @@ def test_text_parser_preserves_decimal_missing_and_release_date() -> None:
     assert len(observations) == 11
     assert observations[0].value == Decimal("100.00000000000001")
     assert observations[0].details["raw_value"] == "100.00000000000001"
+    assert observations[0].details["source_identity"]["canonical_series_id"] == "IP.B50001.S"
+    assert len(observations[0].details["source_identity_hash"]) == 64
     assert observations[0].release_date == date(2026, 1, 15)
 
 

@@ -71,13 +71,27 @@ def test_fed_and_dol_candidates_remain_pending_until_independent_live_gates() ->
 
     assert len(fed.mappings) == 4
     assert len(dol.mappings) == 2
-    assert all(item.mapping_status == "pending_review" for item in [*fed.mappings, *dol.mappings])
+    statuses = {item.indicator_id: item.mapping_status for item in [*fed.mappings, *dol.mappings]}
+    assert statuses["US_INDUSTRIAL_PRODUCTION"] == "valid"
+    assert statuses["US_MANUFACTURING_CAPACITY"] == "valid"
+    assert all(
+        status == "pending_review"
+        for indicator_id, status in statuses.items()
+        if indicator_id not in {"US_INDUSTRIAL_PRODUCTION", "US_MANUFACTURING_CAPACITY"}
+    )
     assert {item.source_series_id for item in fed.mappings} == {
         "IP.B50001.S",
-        "CAPUTL.GMF.S",
+        "CAPUTL.B00004.S",
         "DTCTL.M",
         "DTCTLR.M",
     }
+    capacity = next(
+        item for item in fed.mappings if item.indicator_id == "US_MANUFACTURING_CAPACITY"
+    )
+    assert capacity.fred_series_id == "CUMFNS"
+    assert capacity.source_parameters["transport_series_code"] == "B00004"
+    assert capacity.source_parameters["description_keywords"] == ["manufacturing", "sic"]
+    assert capacity.mapping_status == "valid"
     assert all(item.fallback_source == "fred" for item in [*fed.mappings, *dol.mappings])
 
 

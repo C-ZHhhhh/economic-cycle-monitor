@@ -12,6 +12,10 @@ from app.data_sources.federal_reserve.exceptions import (
     FederalReserveIdentityError,
     FederalReserveResponseError,
 )
+from app.data_sources.federal_reserve.identity import (
+    federal_reserve_source_identity,
+    federal_reserve_source_identity_hash,
+)
 from app.data_sources.federal_reserve.schemas import FederalReserveMappingIdentity
 from app.data_sources.official.schemas import OfficialObservation
 
@@ -130,6 +134,8 @@ def _observations(
     release_date: date | None,
 ) -> list[OfficialObservation]:
     observations: list[OfficialObservation] = []
+    source_identity = federal_reserve_source_identity(identity)
+    source_identity_hash = federal_reserve_source_identity_hash(source_identity)
     for element in series.iter():
         if _local(element.tag) != "Obs":
             continue
@@ -154,6 +160,8 @@ def _observations(
             "unit_multiplier": 9,
             "canonical_unit": "millions_dollars",
             "canonical_value": str(value),
+            "source_identity": source_identity,
+            "source_identity_hash": source_identity_hash,
         }
         observations.append(
             OfficialObservation(

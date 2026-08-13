@@ -126,7 +126,8 @@ def test_indicator_list_observation_pagination_and_key_redaction(
     assert fed_status.status_code == 200
     assert fed_status.json()["credentials_required"] is False
     assert fed_status.json()["registered_mapping_count"] == 4
-    assert fed_status.json()["pending_review_count"] == 4
+    assert fed_status.json()["usable_mapping_count"] == 2
+    assert fed_status.json()["pending_review_count"] == 2
     assert dol_status.status_code == 200
     assert dol_status.json()["credentials_required"] is False
     assert dol_status.json()["registered_mapping_count"] == 2

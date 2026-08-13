@@ -11,6 +11,10 @@ from app.data_sources.federal_reserve.exceptions import (
     FederalReserveIdentityError,
     FederalReserveResponseError,
 )
+from app.data_sources.federal_reserve.identity import (
+    federal_reserve_source_identity,
+    federal_reserve_source_identity_hash,
+)
 from app.data_sources.federal_reserve.schemas import FederalReserveMappingIdentity
 from app.data_sources.official.schemas import OfficialObservation
 
@@ -96,6 +100,8 @@ def parse_g17_text(
     except UnicodeDecodeError as error:
         raise FederalReserveResponseError("G.17 text is not UTF-8") from error
     observations: list[OfficialObservation] = []
+    source_identity = federal_reserve_source_identity(identity)
+    source_identity_hash = federal_reserve_source_identity_hash(source_identity)
     for line in text.splitlines():
         fields = line.replace(",", " ").replace('"', "").split()
         if (
@@ -123,6 +129,8 @@ def parse_g17_text(
                 "raw_unit": identity.source_unit,
                 "base_year": base_year,
                 "canonical_value": str(value),
+                "source_identity": source_identity,
+                "source_identity_hash": source_identity_hash,
             }
             observations.append(
                 OfficialObservation(
