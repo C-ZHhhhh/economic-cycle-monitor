@@ -82,6 +82,22 @@ class HistoryPolicy(BaseModel):
     verification_method: str
 
 
+class ScheduledRelease(BaseModel):
+    """One official data-period release timestamp from a fixed calendar."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period: date
+    scheduled_release_at: datetime
+
+    @model_validator(mode="after")
+    def validate_timezone(self) -> "ScheduledRelease":
+        """Reject machine-local or otherwise timezone-naive release times."""
+        if self.scheduled_release_at.utcoffset() is None:
+            raise ValueError("scheduled_release_at must be timezone-aware")
+        return self
+
+
 class FreshnessPolicy(BaseModel):
     """Expected-period freshness model and grace window."""
 
@@ -92,6 +108,26 @@ class FreshnessPolicy(BaseModel):
     grace_days: int = Field(ge=0)
     stale_policy: Literal["DEGRADE_WITHIN_GRACE_THEN_STALE"]
     legacy_ceiling_days: int | None = Field(default=None, gt=0)
+    release_timezone: str | None = None
+    release_calendar: list[ScheduledRelease] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_fixed_calendar(self) -> "FreshnessPolicy":
+        """Require complete, ordered evidence for fixed official calendars."""
+        is_fixed = self.schedule_type == "CENSUS_MTIS_FIXED_CALENDAR"
+        if is_fixed and (self.release_timezone != "America/New_York"):
+            raise ValueError("MTIS fixed calendar must preserve America/New_York semantics")
+        if is_fixed and not self.release_calendar:
+            raise ValueError("MTIS fixed calendar requires official release entries")
+        periods = [item.period for item in self.release_calendar]
+        releases = [item.scheduled_release_at for item in self.release_calendar]
+        if len(periods) != len(set(periods)):
+            raise ValueError("release calendar periods must be unique")
+        if periods != sorted(periods) or releases != sorted(releases):
+            raise ValueError("release calendar entries must be chronological")
+        if not is_fixed and (self.release_timezone or self.release_calendar):
+            raise ValueError("release calendar fields require a fixed schedule type")
+        return self
 
 
 class ReconciliationPolicy(BaseModel):
@@ -302,6 +338,9 @@ class HealthSnapshot(BaseModel):
     mapping_quality: MappingQuality
     runtime_health: RuntimeHealth
     expected_latest_period: date | None = None
+    scheduled_release_at: datetime | None = None
+    grace_ends_at: datetime | None = None
+    schedule_is_certain: bool = True
     latest_observation_date: date | None = None
     latest_success_at: datetime | None = None
     reasons: list[str] = Field(default_factory=list)

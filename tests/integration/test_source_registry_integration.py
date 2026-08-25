@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.database.models import (
@@ -155,6 +155,114 @@ def test_monthly_grace_is_measured_after_expected_release_date(
     assert snapshot.expected_latest_period == date(2098, 7, 1)
     assert snapshot.runtime_health is RuntimeHealth.DEGRADED
     assert snapshot.reasons == ["EXPECTED_PERIOD_LAG_WITHIN_GRACE"]
+
+
+def _reset_indicator_observations(session: Session, indicator_id: str) -> None:
+    session.execute(delete(RawObservation).where(RawObservation.indicator_id == indicator_id))
+
+
+@pytest.mark.parametrize("indicator_id", ["US_BUSINESS_INVENTORIES", "US_INVENTORY_SALES_RATIO"])
+def test_mtis_may_is_current_before_june_release_and_indicators_are_independent(
+    postgres_session: Session, indicator_id: str
+) -> None:
+    registry = _seed_all(postgres_session)
+    policy = registry.by_indicator()[indicator_id]
+    _reset_indicator_observations(postgres_session, indicator_id)
+    _observation(postgres_session, indicator_id, "census", date(2026, 5, 1))
+    _observation(postgres_session, indicator_id, "fred", date(2026, 5, 1))
+    _request(postgres_session, "census", datetime(2026, 8, 13, tzinfo=UTC))
+    postgres_session.flush()
+
+    evaluated_at = datetime.fromisoformat("2026-08-13T23:59:59-04:00")
+    snapshot = indicator_source_health(postgres_session, policy, evaluated_at=evaluated_at)
+    rows = get_effective_observations(
+        postgres_session,
+        indicator_id,
+        date(2026, 5, 1),
+        date(2026, 5, 1),
+        registry=registry,
+        evaluated_at=evaluated_at,
+    )
+    assert snapshot.expected_latest_period == date(2026, 5, 1)
+    assert snapshot.runtime_health is RuntimeHealth.HEALTHY
+    assert rows[-1].source_used == "census"
+    assert not rows[-1].is_fallback
+    assert rows[-1].resolution_reason == "PRIMARY_POLICY"
+    before_release = indicator_source_health(
+        postgres_session,
+        policy,
+        evaluated_at=datetime.fromisoformat("2026-08-14T09:59:59-04:00"),
+    )
+    assert before_release.expected_latest_period == date(2026, 5, 1)
+    assert before_release.runtime_health is RuntimeHealth.HEALTHY
+
+
+def test_mtis_missing_period_degrades_then_stales_and_recovers(
+    postgres_session: Session,
+) -> None:
+    registry = _seed_all(postgres_session)
+    indicator_id = "US_BUSINESS_INVENTORIES"
+    policy = registry.by_indicator()[indicator_id]
+    _reset_indicator_observations(postgres_session, indicator_id)
+    _observation(postgres_session, indicator_id, "census", date(2026, 5, 1))
+    _observation(postgres_session, indicator_id, "fred", date(2026, 6, 1))
+    _request(postgres_session, "census", datetime(2026, 8, 14, 14, 0, tzinfo=UTC))
+    postgres_session.flush()
+
+    within_grace = datetime.fromisoformat("2026-08-14T10:00:01-04:00")
+    degraded = indicator_source_health(postgres_session, policy, evaluated_at=within_grace)
+    assert degraded.expected_latest_period == date(2026, 6, 1)
+    assert degraded.runtime_health is RuntimeHealth.DEGRADED
+
+    after_grace = datetime.fromisoformat("2026-08-30T10:00:00-04:00")
+    stale = indicator_source_health(postgres_session, policy, evaluated_at=after_grace)
+    fallback = get_effective_observations(
+        postgres_session,
+        indicator_id,
+        date(2026, 6, 1),
+        date(2026, 6, 1),
+        registry=registry,
+        evaluated_at=after_grace,
+    )
+    assert stale.runtime_health is RuntimeHealth.STALE
+    assert fallback[-1].source_used == "fred"
+    assert fallback[-1].is_fallback
+
+    _observation(postgres_session, indicator_id, "census", date(2026, 6, 1))
+    _request(postgres_session, "census", datetime(2026, 8, 30, 13, 59, tzinfo=UTC))
+    postgres_session.flush()
+    recovered = indicator_source_health(postgres_session, policy, evaluated_at=after_grace)
+    primary = get_effective_observations(
+        postgres_session,
+        indicator_id,
+        date(2026, 6, 1),
+        date(2026, 6, 1),
+        registry=registry,
+        evaluated_at=after_grace,
+    )
+    assert recovered.runtime_health is RuntimeHealth.HEALTHY
+    assert primary[-1].source_used == "census"
+    assert not primary[-1].is_fallback
+
+
+def test_mtis_unknown_future_calendar_degrades_without_hard_stale(
+    postgres_session: Session,
+) -> None:
+    registry = _seed_all(postgres_session)
+    indicator_id = "US_INVENTORY_SALES_RATIO"
+    policy = registry.by_indicator()[indicator_id]
+    _reset_indicator_observations(postgres_session, indicator_id)
+    _observation(postgres_session, indicator_id, "census", date(2026, 7, 1))
+    _request(postgres_session, "census", datetime(2026, 10, 1, tzinfo=UTC))
+    postgres_session.flush()
+    snapshot = indicator_source_health(
+        postgres_session,
+        policy,
+        evaluated_at=datetime.fromisoformat("2026-10-01T12:00:00-04:00"),
+    )
+    assert snapshot.runtime_health is RuntimeHealth.DEGRADED
+    assert snapshot.reasons == ["RELEASE_SCHEDULE_UNAVAILABLE"]
+    assert not snapshot.schedule_is_certain
 
 
 def test_current_resolver_uses_healthy_primary(postgres_session: Session) -> None:

@@ -1,8 +1,13 @@
 # Stage 2B-5 Data Layer Freeze Contract
 
-Registry schema `1.0.0` and policy version `stage2b5-v1` freeze the current-data
+Registry schema `1.0.0` and policy version `stage2b5-v2` freeze the current-data
 contract. A deterministic SHA-256 hash is calculated from the validated registry payload
 at runtime and recorded in seed audit status.
+
+Policy v2 separates Census MTIS from generic Census monthly freshness. MTIS evaluates
+the official data-period release timestamp in `America/New_York`, starts grace only after
+that timestamp, and degrades rather than inventing a hard stale result when a future
+official calendar entry is unavailable.
 
 ## Authority and inventory
 

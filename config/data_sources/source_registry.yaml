@@ -1,5 +1,5 @@
 schema_version: "1.0.0"
-registry_policy_version: "stage2b5-v1"
+registry_policy_version: "stage2b5-v2"
 
 # Anchors remove repetition only. PyYAML resolves every merged value before the
 # strict Pydantic contract is validated and hashed.
@@ -18,6 +18,17 @@ templates:
   fresh_bea_monthly: &fresh_bea_monthly {schedule_type: BEA_PERSONAL_INCOME_OUTLAYS_CALENDAR, expected_lag_days: 35, grace_days: 14, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 95}
   fresh_bea_quarterly: &fresh_bea_quarterly {schedule_type: BEA_GDP_RELEASE_CALENDAR, expected_lag_days: 40, grace_days: 21, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 225}
   fresh_census: &fresh_census {schedule_type: CENSUS_PROGRAM_RELEASE_CALENDAR, expected_lag_days: 45, grace_days: 15, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 115}
+  fresh_census_mtis: &fresh_census_mtis
+    schedule_type: CENSUS_MTIS_FIXED_CALENDAR
+    expected_lag_days: 0
+    grace_days: 15
+    stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE
+    legacy_ceiling_days: 115
+    release_timezone: America/New_York
+    release_calendar:
+      - {period: 2026-05-01, scheduled_release_at: "2026-07-16T10:00:00-04:00"}
+      - {period: 2026-06-01, scheduled_release_at: "2026-08-14T10:00:00-04:00"}
+      - {period: 2026-07-01, scheduled_release_at: "2026-09-16T10:00:00-04:00"}
   fresh_fed: &fresh_fed {schedule_type: FEDERAL_RESERVE_RELEASE_CALENDAR, expected_lag_days: 35, grace_days: 14, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 110}
   fresh_dol: &fresh_dol {schedule_type: DOL_WEEKLY_CLAIMS_THURSDAY, expected_lag_days: 5, grace_days: 21, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 28}
   fresh_fred: &fresh_fred {schedule_type: FRED_PROVIDER_STATUS_DRIVEN, expected_lag_days: 45, grace_days: 15, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 95}
@@ -72,7 +83,7 @@ templates:
 
 policies:
   - indicator_id: US_REAL_GDP
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BEA
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -88,7 +99,7 @@ policies:
     vintage: *vintage_gdp
 
   - indicator_id: US_REAL_PCE
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BEA
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -104,7 +115,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_REAL_DISPOSABLE_INCOME
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BEA
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -120,7 +131,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_INDUSTRIAL_PRODUCTION
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: FEDERAL_RESERVE
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -136,7 +147,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_REAL_RETAIL_SALES
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: FRED_CURRENT
     fallback_source: null
     vintage_source: ALFRED_VINTAGE
@@ -153,7 +164,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_NONFARM_EMPLOYMENT
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -169,7 +180,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_CPI
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -185,7 +196,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_CORE_CPI
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -201,7 +212,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_PCE_PRICE
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BEA
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -217,7 +228,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_CORE_PCE_PRICE
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BEA
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -233,7 +244,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_PPI_COMMODITIES
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -249,7 +260,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_UNEMPLOYMENT_RATE
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -265,7 +276,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_U6_RATE
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -281,7 +292,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_PARTICIPATION_RATE
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -297,7 +308,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_EMPLOYMENT_POP_RATIO
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -313,7 +324,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_INITIAL_CLAIMS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: DOL
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -329,7 +340,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_CONTINUING_CLAIMS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: DOL
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -345,7 +356,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_JOB_OPENINGS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -361,7 +372,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_HIRES
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -377,7 +388,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_QUITS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -393,7 +404,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_TEMP_HELP_EMPLOYMENT
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -409,7 +420,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_MANUFACTURING_HOURS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -425,7 +436,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_AVERAGE_HOURLY_EARNINGS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: BLS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -441,7 +452,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_SAVING_RATE
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: FRED_CURRENT
     fallback_source: null
     vintage_source: ALFRED_VINTAGE
@@ -457,7 +468,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_CONSUMER_CREDIT
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: FEDERAL_RESERVE
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -473,7 +484,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_REVOLVING_CREDIT
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: FEDERAL_RESERVE
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -489,7 +500,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_DURABLE_GOODS_ORDERS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: CENSUS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -505,7 +516,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_CORE_CAPITAL_GOODS_ORDERS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: CENSUS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -521,7 +532,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_MANUFACTURING_CAPACITY
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: FEDERAL_RESERVE
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -537,7 +548,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_HOUSING_STARTS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: CENSUS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -553,7 +564,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_BUILDING_PERMITS
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: CENSUS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -569,7 +580,7 @@ policies:
     vintage: *vintage_unverified
 
   - indicator_id: US_BUSINESS_INVENTORIES
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: CENSUS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -578,14 +589,14 @@ policies:
     canonical: {frequency: monthly, unit: millions_dollars, seasonal_adjustment: seasonally_adjusted, base_year: null}
     date_semantics: {observation_date: MONTH_START, release_date: CENSUS_MTIS_RELEASE_DATE}
     history: {earliest_primary_date: 1992-01-01, earliest_fallback_date: 1992-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/mtis.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
-    freshness: *fresh_census
+    freshness: *fresh_census_mtis
     revision: *revision_census_mtis
     comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
     fallback: *fallback_official
     vintage: *vintage_unverified
 
   - indicator_id: US_INVENTORY_SALES_RATIO
-    registry_policy_version: "stage2b5-v1"
+    registry_policy_version: "stage2b5-v2"
     primary_source: CENSUS
     fallback_source: FRED_CURRENT
     vintage_source: ALFRED_VINTAGE
@@ -594,7 +605,7 @@ policies:
     canonical: {frequency: monthly, unit: ratio, seasonal_adjustment: seasonally_adjusted, base_year: null}
     date_semantics: {observation_date: MONTH_START, release_date: CENSUS_MTIS_RELEASE_DATE}
     history: {earliest_primary_date: 1992-01-01, earliest_fallback_date: 1992-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/mtis.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
-    freshness: *fresh_census
+    freshness: *fresh_census_mtis
     revision: *revision_census_mtis
     comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
     fallback: *fallback_official

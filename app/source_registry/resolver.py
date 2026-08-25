@@ -188,6 +188,7 @@ def get_effective_observations(
     *,
     registry: SourceRegistryCatalog | None = None,
     today: date | None = None,
+    evaluated_at: datetime | None = None,
 ) -> list[EffectiveObservation]:
     """Resolve canonical observations without comparing-and-choosing values."""
     if isinstance(as_of, datetime):
@@ -210,7 +211,7 @@ def get_effective_observations(
     _assert_no_integrity_conflict(session, indicator_id)
     mapping = _active_mapping(session, policy)
     quality = _mapping_quality(mapping)
-    health = indicator_source_health(session, policy, today=today)
+    health = indicator_source_health(session, policy, today=today, evaluated_at=evaluated_at)
     if health.runtime_health is RuntimeHealth.ERROR:
         raise SourceIntegrityError("PRIMARY_SOURCE_HEALTH_ERROR")
     primary_source = storage_source_name(policy.primary_source.value)

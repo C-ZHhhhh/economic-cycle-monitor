@@ -19,6 +19,7 @@ from app.source_registry.config import load_source_registry
 from app.source_registry.health import (
     expected_latest_period,
     expected_period_due_date,
+    freshness_expectation,
     mapping_quality_from_status,
 )
 from app.source_registry.resolver import PITGranularityUnsupported, get_effective_observations
@@ -122,7 +123,7 @@ def test_registry_hash_changes_with_policy_version(
 ) -> None:
     content = registry.source_path.read_text(encoding="utf-8")
     changed_path = tmp_path / "source_registry.yaml"
-    changed_path.write_text(content.replace("stage2b5-v1", "stage2b5-v2"), encoding="utf-8")
+    changed_path.write_text(content.replace("stage2b5-v2", "stage2b5-v3"), encoding="utf-8")
     assert load_source_registry(changed_path).registry_hash != registry.registry_hash
 
 
@@ -253,6 +254,44 @@ def test_freshness_grace_starts_at_expected_release_not_period_start(
     expected = expected_latest_period(policy, today=date(2026, 8, 13))
     assert expected == date(2026, 7, 1)
     assert expected_period_due_date(policy, expected) == date(2026, 8, 5)
+
+
+def test_mtis_has_independent_fixed_release_calendar(
+    registry: SourceRegistryCatalog,
+) -> None:
+    by_id = registry.by_indicator()
+    inventories = by_id["US_BUSINESS_INVENTORIES"]
+    ratio = by_id["US_INVENTORY_SALES_RATIO"]
+    assert registry.registry_policy_version == "stage2b5-v2"
+    assert inventories.freshness.schedule_type == "CENSUS_MTIS_FIXED_CALENDAR"
+    assert ratio.freshness.schedule_type == "CENSUS_MTIS_FIXED_CALENDAR"
+    assert inventories.freshness.release_timezone == "America/New_York"
+    assert [item.period for item in inventories.freshness.release_calendar] == [
+        date(2026, 5, 1),
+        date(2026, 6, 1),
+        date(2026, 7, 1),
+    ]
+    assert (
+        by_id["US_DURABLE_GOODS_ORDERS"].freshness.schedule_type
+        == "CENSUS_PROGRAM_RELEASE_CALENDAR"
+    )
+    assert by_id["US_HOUSING_STARTS"].freshness.schedule_type == "CENSUS_PROGRAM_RELEASE_CALENDAR"
+
+
+def test_mtis_release_time_controls_expected_period(
+    registry: SourceRegistryCatalog,
+) -> None:
+    policy = registry.by_indicator()["US_BUSINESS_INVENTORIES"]
+    before = freshness_expectation(
+        policy, evaluated_at=datetime.fromisoformat("2026-08-14T09:59:59-04:00")
+    )
+    after = freshness_expectation(
+        policy, evaluated_at=datetime.fromisoformat("2026-08-14T10:00:00-04:00")
+    )
+    assert before.period == date(2026, 5, 1)
+    assert after.period == date(2026, 6, 1)
+    assert after.scheduled_release_at.isoformat() == "2026-08-14T10:00:00-04:00"
+    assert after.grace_ends_at.isoformat() == "2026-08-29T10:00:00-04:00"
 
 
 @pytest.mark.parametrize(
