@@ -114,11 +114,11 @@ class FreshnessPolicy(BaseModel):
     @model_validator(mode="after")
     def validate_fixed_calendar(self) -> "FreshnessPolicy":
         """Require complete, ordered evidence for fixed official calendars."""
-        is_fixed = self.schedule_type == "CENSUS_MTIS_FIXED_CALENDAR"
-        if is_fixed and (self.release_timezone != "America/New_York"):
-            raise ValueError("MTIS fixed calendar must preserve America/New_York semantics")
+        is_fixed = self.schedule_type.endswith("_FIXED_CALENDAR")
+        if is_fixed and self.release_timezone != "America/New_York":
+            raise ValueError("fixed calendars must preserve America/New_York semantics")
         if is_fixed and not self.release_calendar:
-            raise ValueError("MTIS fixed calendar requires official release entries")
+            raise ValueError("fixed calendars require official release entries")
         periods = [item.period for item in self.release_calendar]
         releases = [item.scheduled_release_at for item in self.release_calendar]
         if len(periods) != len(set(periods)):
@@ -208,18 +208,33 @@ class VintagePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: Literal[SourceSystem.ALFRED_VINTAGE]
-    capability: Literal["ALFRED_PROXY_VINTAGE", "ALFRED_PROXY_VINTAGE_UNVERIFIED"]
+    capability: Literal[
+        "PIT_SAFE_VIA_ALFRED_PROXY",
+        "ALFRED_VINTAGE_AVAILABLE_BUT_LIMITED",
+        "CURRENT_SNAPSHOT_ONLY",
+        "NO_VINTAGE",
+        "PIT_UNVERIFIED",
+    ]
     granularity: Literal["date"]
-    backtest_safety: Literal["VALIDATED_DATE_ONLY", "UNVERIFIED"]
+    information_set_semantics: Literal["END_OF_DAY"]
+    backtest_safety: Literal[
+        "PIT_SAFE_DATE_EOD",
+        "PIT_LIMITED",
+        "CURRENT_SNAPSHOT_ONLY",
+        "UNSAFE",
+        "UNVERIFIED",
+    ]
     validated_as_of_dates: list[date] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_evidence_dates(self) -> "VintagePolicy":
-        """Require explicit evidence dates for a validated-date-only claim."""
-        if self.backtest_safety == "VALIDATED_DATE_ONLY" and not self.validated_as_of_dates:
-            raise ValueError("VALIDATED_DATE_ONLY requires validated_as_of_dates")
-        if self.backtest_safety == "UNVERIFIED" and self.validated_as_of_dates:
-            raise ValueError("UNVERIFIED vintage policy cannot list validated dates")
+        """Require live evidence for safe claims and reject false evidence claims."""
+        if self.backtest_safety == "PIT_SAFE_DATE_EOD" and not self.validated_as_of_dates:
+            raise ValueError("PIT_SAFE_DATE_EOD requires validated_as_of_dates")
+        if self.backtest_safety in {"CURRENT_SNAPSHOT_ONLY", "UNSAFE", "UNVERIFIED"} and (
+            self.validated_as_of_dates
+        ):
+            raise ValueError(f"{self.backtest_safety} vintage policy cannot list validated dates")
         return self
 
 

@@ -7,6 +7,8 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.data_pipeline.schemas import PipelineSelection
+from app.data_quality.service import run_database_quality_checks
 from app.database.models import (
     DataQualityEvent,
     DataSourceRequest,
@@ -265,6 +267,79 @@ def test_mtis_unknown_future_calendar_degrades_without_hard_stale(
     assert not snapshot.schedule_is_certain
 
 
+@pytest.mark.parametrize(
+    ("indicator_id", "source"),
+    [
+        ("US_REAL_PCE", "bea"),
+        ("US_REAL_DISPOSABLE_INCOME", "bea"),
+        ("US_PCE_PRICE", "bea"),
+        ("US_CORE_PCE_PRICE", "bea"),
+        ("US_JOB_OPENINGS", "bls"),
+        ("US_HIRES", "bls"),
+        ("US_QUITS", "bls"),
+        ("US_CONSUMER_CREDIT", "federal_reserve"),
+        ("US_REVOLVING_CREDIT", "federal_reserve"),
+    ],
+)
+def test_v3_fixed_calendars_keep_nine_june_primaries_current_on_august_25(
+    postgres_session: Session, indicator_id: str, source: str
+) -> None:
+    registry = _seed_all(postgres_session)
+    policy = registry.by_indicator()[indicator_id]
+    _reset_indicator_observations(postgres_session, indicator_id)
+    _observation(postgres_session, indicator_id, source, date(2026, 6, 1))
+    _observation(postgres_session, indicator_id, "fred", date(2026, 6, 1))
+    _request(postgres_session, source, datetime(2026, 8, 25, 16, 0, tzinfo=UTC))
+    postgres_session.flush()
+    evaluated_at = datetime.fromisoformat("2026-08-25T23:59:59-04:00")
+
+    snapshot = indicator_source_health(postgres_session, policy, evaluated_at=evaluated_at)
+    rows = get_effective_observations(
+        postgres_session,
+        indicator_id,
+        date(2026, 6, 1),
+        date(2026, 6, 1),
+        registry=registry,
+        evaluated_at=evaluated_at,
+    )
+    assert snapshot.expected_latest_period == date(2026, 6, 1)
+    assert snapshot.runtime_health is RuntimeHealth.HEALTHY
+    assert rows[-1].source_used == source
+    assert not rows[-1].is_fallback
+
+
+def test_bea_pio_missing_released_period_degrades_then_allows_fallback(
+    postgres_session: Session,
+) -> None:
+    registry = _seed_all(postgres_session)
+    indicator_id = "US_REAL_PCE"
+    policy = registry.by_indicator()[indicator_id]
+    _reset_indicator_observations(postgres_session, indicator_id)
+    _observation(postgres_session, indicator_id, "bea", date(2026, 6, 1))
+    _observation(postgres_session, indicator_id, "fred", date(2026, 7, 1))
+    _request(postgres_session, "bea", datetime(2026, 8, 26, 12, 30, tzinfo=UTC))
+    postgres_session.flush()
+
+    within_grace = datetime.fromisoformat("2026-08-26T08:30:01-04:00")
+    degraded = indicator_source_health(postgres_session, policy, evaluated_at=within_grace)
+    assert degraded.expected_latest_period == date(2026, 7, 1)
+    assert degraded.runtime_health is RuntimeHealth.DEGRADED
+
+    after_grace = datetime.fromisoformat("2026-09-10T08:30:00-04:00")
+    stale = indicator_source_health(postgres_session, policy, evaluated_at=after_grace)
+    rows = get_effective_observations(
+        postgres_session,
+        indicator_id,
+        date(2026, 7, 1),
+        date(2026, 7, 1),
+        registry=registry,
+        evaluated_at=after_grace,
+    )
+    assert stale.runtime_health is RuntimeHealth.STALE
+    assert rows[-1].source_used == "fred"
+    assert rows[-1].is_fallback
+
+
 def test_current_resolver_uses_healthy_primary(postgres_session: Session) -> None:
     registry = _seed_all(postgres_session)
     _observation(postgres_session, "US_CPI", "bls", date(2024, 1, 1), "300")
@@ -391,7 +466,9 @@ def test_validated_gdp_date_uses_only_alfred_vintages_visible_as_of_date(
     assert rows[0].is_point_in_time_safe
 
 
-def test_current_and_pit_readiness_are_independent(postgres_session: Session) -> None:
+def test_current_and_pit_readiness_pass_after_all_live_gates(
+    postgres_session: Session,
+) -> None:
     registry = _seed_all(postgres_session)
     today = date(2024, 6, 15)
     for source in {storage_source_name(item.primary_source.value) for item in registry.policies}:
@@ -407,5 +484,41 @@ def test_current_and_pit_readiness_are_independent(postgres_session: Session) ->
     readiness = validate_data_layer(postgres_session, registry=registry, today=today)
     assert readiness.current_data_ready
     assert readiness.current_blockers == []
-    assert not readiness.pit_backtest_ready
-    assert len(readiness.pit_blockers) == 32
+    assert readiness.pit_backtest_ready
+    assert readiness.pit_blockers == []
+
+
+def test_quality_check_does_not_mix_source_separated_vintage_grain(
+    postgres_session: Session,
+) -> None:
+    _seed_all(postgres_session)
+    for source in ("fred", "bls"):
+        postgres_session.add(
+            ObservationVintage(
+                indicator_id="US_UNEMPLOYMENT_RATE",
+                observation_date=date(2025, 1, 1),
+                vintage_date=date(2025, 2, 1),
+                release_stage="revision",
+                revision_number=0,
+                current_value=Decimal("4.1"),
+                source=source,
+                source_vintage_date=date(2025, 2, 1),
+                retrieved_at=datetime(2025, 2, 1, tzinfo=UTC),
+                raw_payload_hash=source.encode().hex().ljust(64, "0"),
+                source_details_json={},
+            )
+        )
+    postgres_session.flush()
+
+    summary = run_database_quality_checks(
+        postgres_session,
+        PipelineSelection(indicator_id="US_UNEMPLOYMENT_RATE"),
+    )
+
+    duplicate = postgres_session.scalar(
+        select(DataQualityEvent.id).where(
+            DataQualityEvent.run_id == summary.run_id,
+            DataQualityEvent.event_type == "duplicate_vintage",
+        )
+    )
+    assert duplicate is None

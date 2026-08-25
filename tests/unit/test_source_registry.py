@@ -123,7 +123,7 @@ def test_registry_hash_changes_with_policy_version(
 ) -> None:
     content = registry.source_path.read_text(encoding="utf-8")
     changed_path = tmp_path / "source_registry.yaml"
-    changed_path.write_text(content.replace("stage2b5-v2", "stage2b5-v3"), encoding="utf-8")
+    changed_path.write_text(content.replace("stage2b5-v3", "stage2b5-v4"), encoding="utf-8")
     assert load_source_registry(changed_path).registry_hash != registry.registry_hash
 
 
@@ -262,7 +262,7 @@ def test_mtis_has_independent_fixed_release_calendar(
     by_id = registry.by_indicator()
     inventories = by_id["US_BUSINESS_INVENTORIES"]
     ratio = by_id["US_INVENTORY_SALES_RATIO"]
-    assert registry.registry_policy_version == "stage2b5-v2"
+    assert registry.registry_policy_version == "stage2b5-v3"
     assert inventories.freshness.schedule_type == "CENSUS_MTIS_FIXED_CALENDAR"
     assert ratio.freshness.schedule_type == "CENSUS_MTIS_FIXED_CALENDAR"
     assert inventories.freshness.release_timezone == "America/New_York"
@@ -295,6 +295,102 @@ def test_mtis_release_time_controls_expected_period(
 
 
 @pytest.mark.parametrize(
+    ("indicator_id", "family", "before", "at_release", "before_period", "after_period"),
+    [
+        (
+            "US_REAL_PCE",
+            "BEA_PIO_FIXED_CALENDAR",
+            "2026-08-26T08:29:59-04:00",
+            "2026-08-26T08:30:00-04:00",
+            date(2026, 6, 1),
+            date(2026, 7, 1),
+        ),
+        (
+            "US_JOB_OPENINGS",
+            "BLS_JOLTS_FIXED_CALENDAR",
+            "2026-09-01T09:59:59-04:00",
+            "2026-09-01T10:00:00-04:00",
+            date(2026, 6, 1),
+            date(2026, 7, 1),
+        ),
+        (
+            "US_CONSUMER_CREDIT",
+            "FED_G19_FIXED_CALENDAR",
+            "2026-09-08T14:59:59-04:00",
+            "2026-09-08T15:00:00-04:00",
+            date(2026, 6, 1),
+            date(2026, 7, 1),
+        ),
+    ],
+)
+def test_exact_family_calendar_controls_release_window(
+    registry: SourceRegistryCatalog,
+    indicator_id: str,
+    family: str,
+    before: str,
+    at_release: str,
+    before_period: date,
+    after_period: date,
+) -> None:
+    policy = registry.by_indicator()[indicator_id]
+    assert policy.freshness.schedule_type == family
+    assert policy.freshness.release_timezone == "America/New_York"
+    assert (
+        freshness_expectation(policy, evaluated_at=datetime.fromisoformat(before)).period
+        == before_period
+    )
+    assert (
+        freshness_expectation(policy, evaluated_at=datetime.fromisoformat(at_release)).period
+        == after_period
+    )
+
+
+def test_fixed_calendar_families_are_isolated(registry: SourceRegistryCatalog) -> None:
+    by_id = registry.by_indicator()
+    assert {
+        by_id[item].freshness.schedule_type
+        for item in [
+            "US_REAL_PCE",
+            "US_REAL_DISPOSABLE_INCOME",
+            "US_PCE_PRICE",
+            "US_CORE_PCE_PRICE",
+        ]
+    } == {"BEA_PIO_FIXED_CALENDAR"}
+    assert {
+        by_id[item].freshness.schedule_type
+        for item in [
+            "US_JOB_OPENINGS",
+            "US_HIRES",
+            "US_QUITS",
+        ]
+    } == {"BLS_JOLTS_FIXED_CALENDAR"}
+    assert {
+        by_id[item].freshness.schedule_type
+        for item in [
+            "US_CONSUMER_CREDIT",
+            "US_REVOLVING_CREDIT",
+        ]
+    } == {"FED_G19_FIXED_CALENDAR"}
+    assert by_id["US_INDUSTRIAL_PRODUCTION"].freshness.schedule_type == (
+        "FEDERAL_RESERVE_RELEASE_CALENDAR"
+    )
+
+
+def test_fixed_calendar_converts_utc_before_release_comparison(
+    registry: SourceRegistryCatalog,
+) -> None:
+    policy = registry.by_indicator()["US_REAL_PCE"]
+    before = freshness_expectation(
+        policy, evaluated_at=datetime.fromisoformat("2026-08-26T12:29:59+00:00")
+    )
+    at_release = freshness_expectation(
+        policy, evaluated_at=datetime.fromisoformat("2026-08-26T12:30:00+00:00")
+    )
+    assert before.period == date(2026, 6, 1)
+    assert at_release.period == date(2026, 7, 1)
+
+
+@pytest.mark.parametrize(
     ("status", "quality"),
     [
         ("valid", MappingQuality.VALID),
@@ -319,10 +415,21 @@ def test_timestamp_pit_is_rejected_before_database_access() -> None:
         )
 
 
-def test_only_gdp_has_validated_pit_date(registry: SourceRegistryCatalog) -> None:
-    validated = [item for item in registry.policies if item.vintage.backtest_safety != "UNVERIFIED"]
-    assert [item.indicator_id for item in validated] == ["US_REAL_GDP"]
-    assert validated[0].vintage.validated_as_of_dates == [date(2020, 6, 30)]
+def test_all_indicators_have_date_eod_alfred_proxy_evidence(
+    registry: SourceRegistryCatalog,
+) -> None:
+    assert len(registry.policies) == 33
+    assert all(
+        item.vintage.capability == "PIT_SAFE_VIA_ALFRED_PROXY"
+        and item.vintage.backtest_safety == "PIT_SAFE_DATE_EOD"
+        and item.vintage.information_set_semantics == "END_OF_DAY"
+        and item.vintage.validated_as_of_dates
+        for item in registry.policies
+    )
+    assert registry.by_indicator()["US_REAL_GDP"].vintage.validated_as_of_dates == [
+        date(2008, 2, 28),
+        date(2020, 6, 30),
+    ]
 
 
 def _stitch_contract() -> StitchingContract:
