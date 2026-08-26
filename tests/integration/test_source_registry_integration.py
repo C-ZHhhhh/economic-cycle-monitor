@@ -30,7 +30,7 @@ from app.source_registry.health import (
 )
 from app.source_registry.readiness import validate_data_layer
 from app.source_registry.resolver import (
-    PITCoverageUnverified,
+    PITSnapshotNotCached,
     SourceIntegrityError,
     get_effective_observations,
 )
@@ -417,11 +417,11 @@ def test_value_conflict_fails_closed_instead_of_falling_back(
         )
 
 
-def test_unverified_alfred_policy_rejects_pit_request(
+def test_uncached_alfred_date_requires_on_demand_materialization(
     postgres_session: Session,
 ) -> None:
     registry = _seed_all(postgres_session)
-    with pytest.raises(PITCoverageUnverified, match="PIT_COVERAGE_UNVERIFIED"):
+    with pytest.raises(PITSnapshotNotCached, match="PIT_SNAPSHOT_NOT_CACHED"):
         get_effective_observations(
             postgres_session,
             "US_CPI",

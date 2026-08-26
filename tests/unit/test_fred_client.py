@@ -220,3 +220,30 @@ def test_expired_cache_entry_is_not_returned(tmp_path: Path) -> None:
     os.utime(path, (expired, expired))
 
     assert cache.get(key) is None
+
+
+def test_current_and_distinct_pit_dates_have_isolated_secret_free_cache_keys() -> None:
+    current = request_cache_key("series/observations", {"series_id": "GDPC1", "file_type": "json"})
+    first_pit = request_cache_key(
+        "series/observations",
+        {
+            "series_id": "GDPC1",
+            "realtime_start": "2020-06-28",
+            "realtime_end": "2020-06-28",
+            "file_type": "json",
+            "api_key": TEST_KEY,
+        },
+    )
+    second_pit = request_cache_key(
+        "series/observations",
+        {
+            "series_id": "GDPC1",
+            "realtime_start": "2020-07-19",
+            "realtime_end": "2020-07-19",
+            "file_type": "json",
+            "api_key": "different-secret",
+        },
+    )
+    assert len({current, first_pit, second_pit}) == 3
+    assert TEST_KEY not in first_pit
+    assert "different-secret" not in second_pit

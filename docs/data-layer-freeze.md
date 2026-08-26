@@ -132,3 +132,22 @@ Freeze PASS requires 33/33 complete contracts, zero configuration/materializatio
 one eligible primary, complete resolution policies, zero current unresolved source,
 normalization, or seasonal conflicts, and zero current error or critical events. A runtime
 `DEGRADED` state is nonblocking only within grace with explicit fallback policy.
+
+## DLCR-001 amendment: arbitrary-date PIT materialization
+
+DLCR-001 extends the frozen date-EOD ALFRED contract without changing registry policy,
+source roles, canonical units, frequency, seasonality, or the registry hash. A canonical
+PIT request may now use any calendar `date`, including a weekend or a date absent from
+`validated_as_of_dates`. Those dates remain live-gate evidence rather than an allowlist.
+
+Resolution first requires `PIT_SAFE_VIA_ALFRED_PROXY`, `PIT_SAFE_DATE_EOD`, and
+`END_OF_DAY`. It then reads an exact local `indicator_id + vintage_as_of` snapshot. On a
+miss, the source-registry on-demand entry reuses the existing FRED client, credential-free
+cache key, raw archive, request audit, and `observation_vintages` persistence before
+re-running canonical resolution. No new table or migration is introduced.
+
+Each materialized snapshot uses `realtime_start = realtime_end = vintage_as_of`, excludes
+observation dates after that date, and is isolated from current observations and other
+as-of dates. Empty, malformed, unavailable, unsafe-capability, or failed ALFRED results
+fail closed; current FRED or official-source snapshots are never substituted. Timestamp
+inputs remain unsupported and are never truncated.

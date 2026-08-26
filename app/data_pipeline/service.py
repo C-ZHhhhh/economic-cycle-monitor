@@ -31,6 +31,7 @@ from app.data_quality.checks import (
 )
 from app.data_quality.repository import persist_quality_issues, reconcile_quality_issues
 from app.data_sources.fred.client import FredClient
+from app.data_sources.fred.exceptions import FredResponseError
 from app.data_sources.fred.metadata import validate_series_metadata
 from app.data_sources.fred.schemas import (
     FredObservation,
@@ -313,7 +314,12 @@ class FredPipelineService:
         return latest - relativedelta(months=self.settings.fred_monthly_lookback_months)
 
     async def fetch_observations_as_known_on(
-        self, indicator_id: str, vintage_date: date
+        self,
+        indicator_id: str,
+        vintage_date: date,
+        *,
+        registry_policy_version: str | None = None,
+        registry_hash: str | None = None,
     ) -> SyncSummary:
         """Fetch and retain one explicit ALFRED snapshot without bulk vintage crawling."""
         indicator = get_indicator(self.session, indicator_id)
@@ -346,6 +352,9 @@ class FredPipelineService:
                     realtime_start=vintage_date,
                     realtime_end=vintage_date,
                 )
+                observations = [item for item in observations if item.date <= vintage_date]
+                if not any(item.value is not None for item in observations):
+                    raise FredResponseError("ALFRED snapshot returned no usable observations")
                 record_successful_request(self.session, run.run_id, payload)
                 summary.request_count = 1
                 summary.cache_hit_count = int(payload.from_cache)
@@ -356,6 +365,13 @@ class FredPipelineService:
                     vintage_date=vintage_date,
                     payload_hash=payload.response_hash,
                     retrieved_at=payload.finished_at,
+                    source_details={
+                        "series_id": indicator.fred_series_id,
+                        "vintage_as_of": vintage_date.isoformat(),
+                        "information_set_semantics": "END_OF_DAY",
+                        "registry_policy_version": registry_policy_version,
+                        "registry_hash": registry_hash,
+                    },
                 )
                 summary.success_count = 1
                 summary.inserted_count = write.inserted

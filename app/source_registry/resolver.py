@@ -36,7 +36,11 @@ class PITGranularityUnsupported(SourceResolutionError):
 
 
 class PITCoverageUnverified(SourceResolutionError):
-    """No approved ALFRED coverage evidence exists for the requested date."""
+    """The indicator policy does not approve safe date-EOD ALFRED resolution."""
+
+
+class PITSnapshotNotCached(SourceResolutionError):
+    """The requested exact-date ALFRED information set is not stored locally."""
 
 
 class SourceIntegrityError(SourceResolutionError):
@@ -103,10 +107,29 @@ def _resolve_pit(
     start: date,
     end: date,
     as_of: date,
+    registry_hash: str,
 ) -> list[EffectiveObservation]:
-    if as_of not in policy.vintage.validated_as_of_dates:
+    if (
+        policy.vintage.capability != "PIT_SAFE_VIA_ALFRED_PROXY"
+        or policy.vintage.backtest_safety != "PIT_SAFE_DATE_EOD"
+        or policy.vintage.information_set_semantics != "END_OF_DAY"
+    ):
         raise PITCoverageUnverified(
-            f"PIT_COVERAGE_UNVERIFIED:{policy.indicator_id}:{as_of.isoformat()}"
+            f"PIT_COVERAGE_UNVERIFIED:{policy.indicator_id}:{policy.vintage.capability}"
+        )
+    snapshot_exists = session.scalar(
+        select(ObservationVintage.id)
+        .where(
+            ObservationVintage.indicator_id == policy.indicator_id,
+            ObservationVintage.source == "fred",
+            ObservationVintage.vintage_date == as_of,
+            ObservationVintage.release_stage == "as_known_on",
+        )
+        .limit(1)
+    )
+    if snapshot_exists is None:
+        raise PITSnapshotNotCached(
+            f"PIT_SNAPSHOT_NOT_CACHED:{policy.indicator_id}:{as_of.isoformat()}"
         )
     vintages = session.scalars(
         select(ObservationVintage)
@@ -114,7 +137,9 @@ def _resolve_pit(
             ObservationVintage.indicator_id == policy.indicator_id,
             ObservationVintage.source == "fred",
             ObservationVintage.observation_date.between(start, end),
-            ObservationVintage.vintage_date <= as_of,
+            ObservationVintage.observation_date <= as_of,
+            ObservationVintage.vintage_date == as_of,
+            ObservationVintage.release_stage == "as_known_on",
         )
         .order_by(
             ObservationVintage.observation_date,
@@ -135,6 +160,7 @@ def _resolve_pit(
             source_used="fred",
             source_identity=indicator.fred_series_id or policy.primary_source_identity,
             source_policy_version=policy.registry_policy_version,
+            registry_hash=registry_hash,
             mapping_version=f"alfred:{policy.registry_policy_version}",
             is_fallback=False,
             resolution_reason="ALFRED_AS_OF_DATE",
@@ -206,7 +232,15 @@ def get_effective_observations(
     if indicator is None:
         raise SourceResolutionError(f"INDICATOR_NOT_MATERIALIZED:{indicator_id}")
     if as_of is not None:
-        return _resolve_pit(session, policy, indicator, start=start, end=end, as_of=as_of)
+        return _resolve_pit(
+            session,
+            policy,
+            indicator,
+            start=start,
+            end=end,
+            as_of=as_of,
+            registry_hash=source_registry.registry_hash,
+        )
 
     _assert_no_integrity_conflict(session, indicator_id)
     mapping = _active_mapping(session, policy)
@@ -270,6 +304,7 @@ def get_effective_observations(
                 source_used=source_used,
                 source_identity=source_identity,
                 source_policy_version=policy.registry_policy_version,
+                registry_hash=source_registry.registry_hash,
                 mapping_version=(
                     mapping.mapping_version
                     if mapping is not None and not is_fallback
