@@ -330,6 +330,7 @@ class EffectiveObservation(BaseModel):
     source_used: str
     source_identity: str
     source_policy_version: str
+    registry_hash: str
     mapping_version: str
     is_fallback: bool
     resolution_reason: str

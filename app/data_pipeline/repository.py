@@ -337,7 +337,11 @@ def record_failed_request(
 ) -> None:
     """Persist sanitized failure evidence when no successful payload exists."""
     now = datetime.now(UTC)
-    safe = {key: value for key, value in parameters.items() if key.lower() != "api_key"}
+    safe = {
+        key: value.isoformat() if isinstance(value, (date, datetime)) else value
+        for key, value in parameters.items()
+        if key.lower() != "api_key"
+    }
     status_code = error.status_code if isinstance(error, FredRequestError) else None
     attempt_count = error.attempt_count if isinstance(error, FredRequestError) else 1
     session.add(
@@ -582,6 +586,7 @@ def persist_as_known_observations(
     vintage_date: date,
     payload_hash: str,
     retrieved_at: datetime,
+    source_details: dict[str, Any] | None = None,
 ) -> ObservationWriteResult:
     """Store a requested ALFRED snapshot without replacing current observations."""
     result = ObservationWriteResult()
@@ -595,6 +600,7 @@ def persist_as_known_observations(
                 ObservationVintage.observation_date == item.date,
                 ObservationVintage.vintage_date == vintage_date,
                 ObservationVintage.source == "fred",
+                ObservationVintage.release_stage == "as_known_on",
             )
         )
         if exists is not None:
@@ -612,6 +618,7 @@ def persist_as_known_observations(
                 indicator_id=indicator.indicator_id,
                 observation_date=item.date,
                 vintage_date=vintage_date,
+                available_at=datetime.combine(vintage_date, datetime.max.time(), tzinfo=UTC),
                 release_stage="as_known_on",
                 revision_number=int(max_revision or 0) + 1,
                 current_value=item.value,
@@ -619,6 +626,7 @@ def persist_as_known_observations(
                 source_vintage_date=vintage_date,
                 retrieved_at=retrieved_at,
                 raw_payload_hash=payload_hash,
+                source_details_json=source_details or {},
             )
         )
         result.inserted += 1
