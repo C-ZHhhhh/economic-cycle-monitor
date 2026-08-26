@@ -12,13 +12,7 @@ mappings:
     expected_unit: index
     expected_frequency: monthly
     expected_seasonal_adjustment: seasonally_adjusted
-    source_priority: 1
-    fallback_source: fred
-    vintage_source: alfred
     normalization_rule: identity_with_validated_base
-    comparison_tolerance: 0.001
-    distribution_lag_days: 7
-    revision_lookback_years: 100
     mapping_status: valid
     enabled: true
     mapping_version: "0.6.0"
@@ -35,13 +29,7 @@ mappings:
     expected_unit: percent
     expected_frequency: monthly
     expected_seasonal_adjustment: seasonally_adjusted
-    source_priority: 1
-    fallback_source: fred
-    vintage_source: alfred
     normalization_rule: identity
-    comparison_tolerance: 0.001
-    distribution_lag_days: 7
-    revision_lookback_years: 100
     mapping_status: valid
     enabled: true
     mapping_version: "0.6.0"
@@ -58,13 +46,7 @@ mappings:
     expected_unit: millions_dollars
     expected_frequency: monthly
     expected_seasonal_adjustment: seasonally_adjusted
-    source_priority: 1
-    fallback_source: fred
-    vintage_source: alfred
     normalization_rule: identity
-    comparison_tolerance: 0.001
-    distribution_lag_days: 10
-    revision_lookback_years: 100
     mapping_status: valid
     enabled: true
     mapping_version: "0.6.0"
@@ -81,13 +63,7 @@ mappings:
     expected_unit: millions_dollars
     expected_frequency: monthly
     expected_seasonal_adjustment: seasonally_adjusted
-    source_priority: 1
-    fallback_source: fred
-    vintage_source: alfred
     normalization_rule: identity
-    comparison_tolerance: 0.001
-    distribution_lag_days: 10
-    revision_lookback_years: 100
     mapping_status: valid
     enabled: true
     mapping_version: "0.6.0"

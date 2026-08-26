@@ -105,10 +105,17 @@ def run_database_quality_checks(
             select(
                 ObservationVintage.observation_date,
                 ObservationVintage.vintage_date,
+                ObservationVintage.revision_number,
+                ObservationVintage.source,
                 func.count(ObservationVintage.id),
             )
             .where(ObservationVintage.indicator_id == indicator.indicator_id)
-            .group_by(ObservationVintage.observation_date, ObservationVintage.vintage_date)
+            .group_by(
+                ObservationVintage.observation_date,
+                ObservationVintage.vintage_date,
+                ObservationVintage.revision_number,
+                ObservationVintage.source,
+            )
             .having(func.count(ObservationVintage.id) > 1)
         ).all()
         duplicate_issues = [
@@ -116,11 +123,21 @@ def run_database_quality_checks(
                 indicator.indicator_id,
                 observation_date=observation_date,
                 vintage_date=vintage_date,
+                revision_number=revision_number,
+                source=source,
             )
-            for observation_date, vintage_date, _count in duplicates
+            for observation_date, vintage_date, revision_number, source, _count in duplicates
         ]
         issues.extend(duplicate_issues)
-        issues_to_persist.extend(duplicate_issues)
+        duplicate_inserted, duplicate_resolved = reconcile_quality_issues(
+            session,
+            duplicate_issues,
+            run_id=run.run_id,
+            indicator_id=indicator.indicator_id,
+            event_types=("duplicate_vintage",),
+        )
+        inserted += duplicate_inserted
+        resolved += duplicate_resolved
     conflicts = session.execute(
         select(
             DataSourceRequest.series_id,

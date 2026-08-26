@@ -1,6 +1,5 @@
 """Typed schemas for reusable official-source mappings."""
 
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,13 +24,7 @@ class SourceMappingDefinition(BaseModel):
     expected_unit: str
     expected_frequency: str
     expected_seasonal_adjustment: str
-    source_priority: int = Field(ge=1)
-    fallback_source: str
-    vintage_source: str
     normalization_rule: str
-    comparison_tolerance: Decimal = Field(ge=0)
-    distribution_lag_days: int = Field(ge=0)
-    revision_lookback_years: int = Field(ge=1)
     mapping_status: MappingStatus
     enabled: bool
     mapping_version: str

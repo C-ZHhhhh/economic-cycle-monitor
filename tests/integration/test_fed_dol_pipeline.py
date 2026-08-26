@@ -72,7 +72,7 @@ async def test_dol_operational_degradation_does_not_downgrade_reviewed_mapping(
         )
     )
     assert mapping is not None
-    assert mapping.mapping_status == "valid_with_warning"
+    assert mapping.mapping_status == "valid"
     assert summary.errors[0].error_type == "source_operational_degradation"
     issue = postgres_session.scalar(
         select(DataQualityEvent).where(

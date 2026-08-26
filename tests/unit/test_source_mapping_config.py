@@ -76,8 +76,8 @@ def test_fed_and_dol_candidates_remain_pending_until_independent_live_gates() ->
     assert statuses["US_MANUFACTURING_CAPACITY"] == "valid"
     assert statuses["US_CONSUMER_CREDIT"] == "valid"
     assert statuses["US_REVOLVING_CREDIT"] == "valid"
-    assert statuses["US_INITIAL_CLAIMS"] == "valid_with_warning"
-    assert statuses["US_CONTINUING_CLAIMS"] == "valid_with_warning"
+    assert statuses["US_INITIAL_CLAIMS"] == "valid"
+    assert statuses["US_CONTINUING_CLAIMS"] == "valid"
     assert {item.source_series_id for item in fed.mappings} == {
         "IP.B50001.S",
         "CAPUTL.B00004.S",
@@ -101,7 +101,7 @@ def test_fed_and_dol_candidates_remain_pending_until_independent_live_gates() ->
     assert {item.source_parameters["wire_frequency"] for item in g19} == {"129"}
     assert {item.source_parameters["data_representation"] for item in g19} == {"MILLDOLL"}
     assert {item.source_parameters["unit_multiplier"] for item in g19} == {"1000000"}
-    assert all(item.fallback_source == "fred" for item in [*fed.mappings, *dol.mappings])
+    assert all(not hasattr(item, "fallback_source") for item in [*fed.mappings, *dol.mappings])
 
 
 def test_production_fed_mapping_has_no_ddp_package_dependency() -> None:

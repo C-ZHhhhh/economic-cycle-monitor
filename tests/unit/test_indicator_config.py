@@ -3,7 +3,7 @@
 from decimal import Decimal
 
 from app.indicators.config import load_indicator_catalog
-from app.source_mappings.config import load_source_mapping_catalog
+from app.source_registry.config import load_source_registry
 
 
 def test_stage_two_catalog_contains_exactly_33_unique_fred_series() -> None:
@@ -21,16 +21,12 @@ def test_catalog_keeps_stage_three_fields_inert() -> None:
 
     assert all(item.direction == "pending_stage3" for item in catalog.indicators)
     assert all(item.weight == Decimal("0") for item in catalog.indicators)
-    bls = {item.indicator_id: item for item in load_source_mapping_catalog().mappings}
-    assert len(bls) == 14
-    for item in catalog.indicators:
-        if item.indicator_id in bls:
-            assert item.primary_source == "bls"
-            assert item.primary_source_series_id == bls[item.indicator_id].source_series_id
-            assert item.fallback_source == "fred"
-        else:
-            assert item.primary_source == "fred"
-            assert item.fred_series_id == item.primary_source_series_id
+    registry = load_source_registry()
+    assert {item.indicator_id for item in catalog.indicators} == {
+        item.indicator_id for item in registry.policies
+    }
+    assert all(not hasattr(item, "primary_source") for item in catalog.indicators)
+    assert all(not hasattr(item, "fallback_source") for item in catalog.indicators)
 
 
 def test_semantically_sensitive_series_ids_are_preserved() -> None:

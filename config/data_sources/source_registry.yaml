@@ -1,0 +1,715 @@
+schema_version: "1.0.0"
+registry_policy_version: "stage2b5-v3"
+
+# Anchors remove repetition only. PyYAML resolves every merged value before the
+# strict Pydantic contract is validated and hashed.
+templates:
+  fallback_official: &fallback_official
+    allowed_reasons: [PRIMARY_BEFORE_OFFICIAL_HISTORY, PRIMARY_STALE_BEYOND_GRACE, PRIMARY_TEMPORARILY_UNAVAILABLE]
+    recovery_policy: {require_valid_identity: true, require_expected_period: true, require_successful_sync: true, require_conflict_free_overlap: true}
+    hysteresis: {mode: STATELESS_MVP, durable_transition_state: false}
+  fallback_none: &fallback_none
+    allowed_reasons: []
+    recovery_policy: {require_valid_identity: true, require_expected_period: true, require_successful_sync: true, require_conflict_free_overlap: true}
+    hysteresis: {mode: STATELESS_MVP, durable_transition_state: false}
+  vintage_safe: &vintage_safe
+    source: ALFRED_VINTAGE
+    capability: PIT_SAFE_VIA_ALFRED_PROXY
+    granularity: date
+    information_set_semantics: END_OF_DAY
+    backtest_safety: PIT_SAFE_DATE_EOD
+  fresh_bls: &fresh_bls {schedule_type: BLS_PROGRAM_RELEASE_CALENDAR, expected_lag_days: 35, grace_days: 14, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 105}
+  fresh_bls_jolts: &fresh_bls_jolts
+    schedule_type: BLS_JOLTS_FIXED_CALENDAR
+    expected_lag_days: 0
+    grace_days: 14
+    stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE
+    legacy_ceiling_days: 105
+    release_timezone: America/New_York
+    release_calendar:
+      - {period: 2026-05-01, scheduled_release_at: "2026-06-30T10:00:00-04:00"}
+      - {period: 2026-06-01, scheduled_release_at: "2026-08-04T10:00:00-04:00"}
+      - {period: 2026-07-01, scheduled_release_at: "2026-09-01T10:00:00-04:00"}
+      - {period: 2026-08-01, scheduled_release_at: "2026-09-29T10:00:00-04:00"}
+  fresh_bea_monthly: &fresh_bea_monthly {schedule_type: BEA_PERSONAL_INCOME_OUTLAYS_CALENDAR, expected_lag_days: 35, grace_days: 14, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 95}
+  fresh_bea_pio: &fresh_bea_pio
+    schedule_type: BEA_PIO_FIXED_CALENDAR
+    expected_lag_days: 0
+    grace_days: 14
+    stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE
+    legacy_ceiling_days: 95
+    release_timezone: America/New_York
+    release_calendar:
+      - {period: 2026-06-01, scheduled_release_at: "2026-07-30T08:30:00-04:00"}
+      - {period: 2026-07-01, scheduled_release_at: "2026-08-26T08:30:00-04:00"}
+      - {period: 2026-08-01, scheduled_release_at: "2026-09-30T08:30:00-04:00"}
+  fresh_bea_quarterly: &fresh_bea_quarterly {schedule_type: BEA_GDP_RELEASE_CALENDAR, expected_lag_days: 40, grace_days: 21, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 225}
+  fresh_census: &fresh_census {schedule_type: CENSUS_PROGRAM_RELEASE_CALENDAR, expected_lag_days: 45, grace_days: 15, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 115}
+  fresh_census_mtis: &fresh_census_mtis
+    schedule_type: CENSUS_MTIS_FIXED_CALENDAR
+    expected_lag_days: 0
+    grace_days: 15
+    stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE
+    legacy_ceiling_days: 115
+    release_timezone: America/New_York
+    release_calendar:
+      - {period: 2026-05-01, scheduled_release_at: "2026-07-16T10:00:00-04:00"}
+      - {period: 2026-06-01, scheduled_release_at: "2026-08-14T10:00:00-04:00"}
+      - {period: 2026-07-01, scheduled_release_at: "2026-09-16T10:00:00-04:00"}
+  fresh_fed: &fresh_fed {schedule_type: FEDERAL_RESERVE_RELEASE_CALENDAR, expected_lag_days: 35, grace_days: 14, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 110}
+  fresh_fed_g19: &fresh_fed_g19
+    schedule_type: FED_G19_FIXED_CALENDAR
+    expected_lag_days: 0
+    grace_days: 14
+    stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE
+    legacy_ceiling_days: 110
+    release_timezone: America/New_York
+    release_calendar:
+      - {period: 2026-06-01, scheduled_release_at: "2026-08-07T15:00:00-04:00"}
+      - {period: 2026-07-01, scheduled_release_at: "2026-09-08T15:00:00-04:00"}
+  fresh_dol: &fresh_dol {schedule_type: DOL_WEEKLY_CLAIMS_THURSDAY, expected_lag_days: 5, grace_days: 21, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 28}
+  fresh_fred: &fresh_fred {schedule_type: FRED_PROVIDER_STATUS_DRIVEN, expected_lag_days: 45, grace_days: 15, stale_policy: DEGRADE_WITHIN_GRACE_THEN_STALE, legacy_ceiling_days: 95}
+  revision_cpi: &revision_cpi
+    recent_reconciliation: {strategy: rolling_window, window_months: 18}
+    annual_or_benchmark_reconciliation: {strategy: annual_seasonal_recalculation, window_years: 5}
+    deep_reconciliation: {strategy: event_driven_full_history}
+  revision_ppi: &revision_ppi
+    recent_reconciliation: {strategy: rolling_window, window_months: 4}
+    annual_or_benchmark_reconciliation: {strategy: not_applicable}
+    deep_reconciliation: {strategy: event_driven_full_history}
+  revision_ces: &revision_ces
+    recent_reconciliation: {strategy: monthly_preliminary_revision, window_months: 3}
+    annual_or_benchmark_reconciliation: {strategy: annual_benchmark_and_seasonal, window_years: 5}
+    deep_reconciliation: {strategy: event_driven_full_history}
+  revision_cps: &revision_cps
+    recent_reconciliation: {strategy: rolling_window, window_months: 12}
+    annual_or_benchmark_reconciliation: {strategy: annual_controls_and_seasonal, window_years: 5}
+    deep_reconciliation: {strategy: event_driven_full_history}
+  revision_jolts: &revision_jolts
+    recent_reconciliation: {strategy: monthly_preliminary_revision, window_months: 3}
+    annual_or_benchmark_reconciliation: {strategy: annual_benchmark_and_seasonal, window_years: 5}
+    deep_reconciliation: {strategy: event_driven_full_history}
+  revision_bea: &revision_bea
+    recent_reconciliation: {strategy: rolling_window, window_years: 5}
+    annual_or_benchmark_reconciliation: {strategy: annual_nipa_update, window_years: 5}
+    deep_reconciliation: {strategy: comprehensive_update_full_history}
+  revision_census_m3: &revision_census_m3
+    recent_reconciliation: {strategy: rolling_window, window_years: 5}
+    annual_or_benchmark_reconciliation: {strategy: annual_benchmark, window_years: 5}
+    deep_reconciliation: {strategy: benchmark_event_full_history}
+  revision_census_nrc: &revision_census_nrc
+    recent_reconciliation: {strategy: rolling_window, window_years: 2}
+    annual_or_benchmark_reconciliation: {strategy: annual_revision, window_years: 2}
+    deep_reconciliation: {strategy: revision_event_full_history}
+  revision_census_mtis: &revision_census_mtis
+    recent_reconciliation: {strategy: rolling_window, window_years: 5}
+    annual_or_benchmark_reconciliation: {strategy: annual_survey_revision, window_years: 5}
+    deep_reconciliation: {strategy: revision_event_full_history}
+  revision_fed: &revision_fed
+    recent_reconciliation: {strategy: full_official_release}
+    annual_or_benchmark_reconciliation: {strategy: full_official_release}
+    deep_reconciliation: {strategy: full_official_release_and_identity_revalidation}
+  revision_dol: &revision_dol
+    recent_reconciliation: {strategy: weekly_recent, window_days: 90}
+    annual_or_benchmark_reconciliation: {strategy: annual_seasonal_reconciliation, window_years: 5}
+    deep_reconciliation: {strategy: revision_event_full_history}
+  revision_fred_monthly: &revision_fred_monthly
+    recent_reconciliation: {strategy: rolling_window, window_months: 18}
+    annual_or_benchmark_reconciliation: {strategy: alfred_change_audit, window_years: 5}
+    deep_reconciliation: {strategy: event_driven_alfred_full_history}
+
+policies:
+  - indicator_id: US_REAL_GDP
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BEA
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: A191RX
+    canonical: {frequency: quarterly, unit: chained_dollars, seasonal_adjustment: seasonally_adjusted_annual_rate, base_year: 2017}
+    date_semantics: {observation_date: QUARTER_START, release_date: BEA_GDP_RELEASE_DATE}
+    history: {earliest_primary_date: 1947-01-01, earliest_fallback_date: 1947-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://apps.bea.gov/iTable/?ReqID=19&step=2", verification_method: "reviewed BEA GetData table/series/line boundary"}
+    freshness: *fresh_bea_quarterly
+    revision: *revision_bea
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.001, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2008-02-28, 2020-06-30]
+
+  - indicator_id: US_REAL_PCE
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BEA
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: DPCERX
+    canonical: {frequency: monthly, unit: chained_dollars, seasonal_adjustment: seasonally_adjusted_annual_rate, base_year: 2017}
+    date_semantics: {observation_date: MONTH_START, release_date: BEA_PERSONAL_INCOME_OUTLAYS_RELEASE_DATE}
+    history: {earliest_primary_date: 2007-01-01, earliest_fallback_date: 2007-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://apps.bea.gov/iTable/?ReqID=19&step=2", verification_method: "reviewed BEA GetData table/series/line boundary"}
+    freshness: *fresh_bea_pio
+    revision: *revision_bea
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.1, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2015-10-30]
+
+  - indicator_id: US_REAL_DISPOSABLE_INCOME
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BEA
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: A067RX
+    canonical: {frequency: monthly, unit: chained_dollars, seasonal_adjustment: seasonally_adjusted_annual_rate, base_year: 2017}
+    date_semantics: {observation_date: MONTH_START, release_date: BEA_PERSONAL_INCOME_OUTLAYS_RELEASE_DATE}
+    history: {earliest_primary_date: 1959-01-01, earliest_fallback_date: 1959-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://apps.bea.gov/iTable/?ReqID=19&step=2", verification_method: "reviewed BEA GetData table/series/line boundary"}
+    freshness: *fresh_bea_pio
+    revision: *revision_bea
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.1, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2002-04-29]
+
+  - indicator_id: US_INDUSTRIAL_PRODUCTION
+    registry_policy_version: "stage2b5-v3"
+    primary_source: FEDERAL_RESERVE
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: IP.B50001.S
+    canonical: {frequency: monthly, unit: index, seasonal_adjustment: seasonally_adjusted, base_year: 2017}
+    date_semantics: {observation_date: MONTH_START, release_date: G17_RELEASE_DATE}
+    history: {earliest_primary_date: 1919-01-01, earliest_fallback_date: 1919-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://www.federalreserve.gov/releases/g17/", verification_method: "reviewed G.17 official release identity and full-file boundary"}
+    freshness: *fresh_fed
+    revision: *revision_fed
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.001, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [1976-12-15]
+
+  - indicator_id: US_REAL_RETAIL_SALES
+    registry_policy_version: "stage2b5-v3"
+    primary_source: FRED_CURRENT
+    fallback_source: null
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DERIVED
+    primary_source_identity: RRSFS
+    supporting_sources: [{source: CENSUS, source_identity: "census-eits:marts:44X72:SM", role: SUPPORTING_COMPONENT}]
+    canonical: {frequency: monthly, unit: millions_1982_84_cpi_adjusted_dollars, seasonal_adjustment: seasonally_adjusted, base_year: "1982-84 CPI"}
+    date_semantics: {observation_date: MONTH_START, release_date: FRED_REALTIME_PERIOD}
+    history: {earliest_primary_date: 1992-01-01, earliest_fallback_date: null, extension_policy: PRIMARY_ONLY, verification_source: "https://fred.stlouisfed.org/series/RRSFS", verification_method: "reviewed FRED metadata; Census nominal series retained only as supporting component"}
+    freshness: *fresh_fred
+    revision: *revision_fred_monthly
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 0, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_none
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2011-07-14]
+
+  - indicator_id: US_NONFARM_EMPLOYMENT
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: CES0000000001
+    canonical: {frequency: monthly, unit: thousands_persons, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1939-01-01, earliest_fallback_date: 1939-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_ces
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [1990-02-02]
+
+  - indicator_id: US_CPI
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: CUSR0000SA0
+    canonical: {frequency: monthly, unit: index, seasonal_adjustment: seasonally_adjusted, base_year: "1982-84"}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_CPI_RELEASE_DATE}
+    history: {earliest_primary_date: 1947-01-01, earliest_fallback_date: 1947-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_cpi
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [1999-05-14]
+
+  - indicator_id: US_CORE_CPI
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: CUSR0000SA0L1E
+    canonical: {frequency: monthly, unit: index, seasonal_adjustment: seasonally_adjusted, base_year: "1982-84"}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_CPI_RELEASE_DATE}
+    history: {earliest_primary_date: 1957-01-01, earliest_fallback_date: 1957-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_cpi
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2011-01-14]
+
+  - indicator_id: US_PCE_PRICE
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BEA
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: DPCERG
+    canonical: {frequency: monthly, unit: index, seasonal_adjustment: seasonally_adjusted, base_year: 2017}
+    date_semantics: {observation_date: MONTH_START, release_date: BEA_PERSONAL_INCOME_OUTLAYS_RELEASE_DATE}
+    history: {earliest_primary_date: 1959-01-01, earliest_fallback_date: 1959-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://apps.bea.gov/iTable/?ReqID=19&step=2", verification_method: "reviewed BEA GetData table/series/line boundary"}
+    freshness: *fresh_bea_pio
+    revision: *revision_bea
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.001, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2012-06-29]
+
+  - indicator_id: US_CORE_PCE_PRICE
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BEA
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: DPCCRG
+    canonical: {frequency: monthly, unit: index, seasonal_adjustment: seasonally_adjusted, base_year: 2017}
+    date_semantics: {observation_date: MONTH_START, release_date: BEA_PERSONAL_INCOME_OUTLAYS_RELEASE_DATE}
+    history: {earliest_primary_date: 1959-01-01, earliest_fallback_date: 1959-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://apps.bea.gov/iTable/?ReqID=19&step=2", verification_method: "reviewed BEA GetData table/series/line boundary"}
+    freshness: *fresh_bea_pio
+    revision: *revision_bea
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.001, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2012-06-29]
+
+  - indicator_id: US_PPI_COMMODITIES
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: WPU00000000
+    canonical: {frequency: monthly, unit: index, seasonal_adjustment: not_seasonally_adjusted, base_year: 1982}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_PPI_RELEASE_DATE}
+    history: {earliest_primary_date: 1913-01-01, earliest_fallback_date: 1913-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_ppi
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-10-14]
+
+  - indicator_id: US_UNEMPLOYMENT_RATE
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: LNS14000000
+    canonical: {frequency: monthly, unit: percent, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1948-01-01, earliest_fallback_date: 1948-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_cps
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [1992-06-05]
+
+  - indicator_id: US_U6_RATE
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: LNS13327709
+    canonical: {frequency: monthly, unit: percent, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1994-01-01, earliest_fallback_date: 1994-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_cps
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2017-12-08]
+
+  - indicator_id: US_PARTICIPATION_RATE
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: LNS11300000
+    canonical: {frequency: monthly, unit: percent, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1948-01-01, earliest_fallback_date: 1948-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_cps
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-12-03]
+
+  - indicator_id: US_EMPLOYMENT_POP_RATIO
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: LNS12300000
+    canonical: {frequency: monthly, unit: percent, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1948-01-01, earliest_fallback_date: 1948-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_cps
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-10-08]
+
+  - indicator_id: US_INITIAL_CLAIMS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: DOL
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "r539cy:initial_claims:sa"
+    canonical: {frequency: weekly, unit: number, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: WEEK_ENDING, release_date: DOL_REPORT_RUN_DATE}
+    history: {earliest_primary_date: 1967-01-07, earliest_fallback_date: 1967-01-07, extension_policy: PRIMARY_ONLY, verification_source: "https://oui.doleta.gov/unemploy/claims.asp", verification_method: "reviewed DOL r539cy official weekEnded identity"}
+    freshness: *fresh_dol
+    revision: *revision_dol
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2017-01-12]
+
+  - indicator_id: US_CONTINUING_CLAIMS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: DOL
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "r539cy:insured_unemployment:sa"
+    canonical: {frequency: weekly, unit: number, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: WEEK_ENDING, release_date: DOL_REPORT_RUN_DATE}
+    history: {earliest_primary_date: 1967-01-07, earliest_fallback_date: 1967-01-07, extension_policy: PRIMARY_ONLY, verification_source: "https://oui.doleta.gov/unemploy/claims.asp", verification_method: "reviewed DOL r539cy official weekEnded identity"}
+    freshness: *fresh_dol
+    revision: *revision_dol
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2017-03-09]
+
+  - indicator_id: US_JOB_OPENINGS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: JTS000000000000000JOL
+    canonical: {frequency: monthly, unit: thousands_persons, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_JOLTS_RELEASE_DATE}
+    history: {earliest_primary_date: 2000-12-01, earliest_fallback_date: 2000-12-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls_jolts
+    revision: *revision_jolts
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2017-08-08]
+
+  - indicator_id: US_HIRES
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: JTS000000000000000HIR
+    canonical: {frequency: monthly, unit: rate, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_JOLTS_RELEASE_DATE}
+    history: {earliest_primary_date: 2000-12-01, earliest_fallback_date: 2000-12-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls_jolts
+    revision: *revision_jolts
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2017-08-08]
+
+  - indicator_id: US_QUITS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: JTS000000000000000QUR
+    canonical: {frequency: monthly, unit: rate, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_JOLTS_RELEASE_DATE}
+    history: {earliest_primary_date: 2000-12-01, earliest_fallback_date: 2000-12-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls_jolts
+    revision: *revision_jolts
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2017-08-08]
+
+  - indicator_id: US_TEMP_HELP_EMPLOYMENT
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: CES6056132001
+    canonical: {frequency: monthly, unit: thousands_persons, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1990-01-01, earliest_fallback_date: 1990-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_ces
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2017-11-03]
+
+  - indicator_id: US_MANUFACTURING_HOURS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: CES3000000007
+    canonical: {frequency: monthly, unit: hours, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1939-01-01, earliest_fallback_date: 1939-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_ces
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [1993-04-02]
+
+  - indicator_id: US_AVERAGE_HOURLY_EARNINGS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: BLS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: CES0500000008
+    canonical: {frequency: monthly, unit: dollars_per_hour, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: BLS_EMPLOYMENT_SITUATION_RELEASE_DATE}
+    history: {earliest_primary_date: 1964-01-01, earliest_fallback_date: 1964-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.bls.gov/publicAPI/v2/timeseries/data/", verification_method: "official BLS API boundary probe for candidate first year and preceding year"}
+    freshness: *fresh_bls
+    revision: *revision_ces
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 2, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2012-01-06]
+
+  - indicator_id: US_SAVING_RATE
+    registry_policy_version: "stage2b5-v3"
+    primary_source: FRED_CURRENT
+    fallback_source: null
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: PSAVERT
+    canonical: {frequency: monthly, unit: percent, seasonal_adjustment: seasonally_adjusted_annual_rate, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: FRED_REALTIME_PERIOD}
+    history: {earliest_primary_date: 1959-01-01, earliest_fallback_date: null, extension_policy: PRIMARY_ONLY, verification_source: "https://fred.stlouisfed.org/series/PSAVERT", verification_method: "reviewed FRED metadata boundary"}
+    freshness: *fresh_fred
+    revision: *revision_fred_monthly
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 0, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_none
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-08-03]
+
+  - indicator_id: US_CONSUMER_CREDIT
+    registry_policy_version: "stage2b5-v3"
+    primary_source: FEDERAL_RESERVE
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: DTCTL.M
+    canonical: {frequency: monthly, unit: millions_dollars, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: G19_RELEASE_DATE}
+    history: {earliest_primary_date: 1943-01-01, earliest_fallback_date: 1943-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://www.federalreserve.gov/releases/g19/", verification_method: "reviewed G.19 official SDMX identity and full-file boundary"}
+    freshness: *fresh_fed_g19
+    revision: *revision_fed
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.001, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-10-07]
+
+  - indicator_id: US_REVOLVING_CREDIT
+    registry_policy_version: "stage2b5-v3"
+    primary_source: FEDERAL_RESERVE
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: DTCTLR.M
+    canonical: {frequency: monthly, unit: millions_dollars, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: G19_RELEASE_DATE}
+    history: {earliest_primary_date: 1968-01-01, earliest_fallback_date: 1968-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://www.federalreserve.gov/releases/g19/", verification_method: "reviewed G.19 official SDMX identity and full-file boundary"}
+    freshness: *fresh_fed_g19
+    revision: *revision_fed
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.001, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-10-07]
+
+  - indicator_id: US_DURABLE_GOODS_ORDERS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: CENSUS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "census-eits:m3:MDM:NO"
+    canonical: {frequency: monthly, unit: millions_dollars, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: CENSUS_M3_RELEASE_DATE}
+    history: {earliest_primary_date: 1992-01-01, earliest_fallback_date: 1992-02-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/m3.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
+    freshness: *fresh_census
+    revision: *revision_census_m3
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2012-02-03]
+
+  - indicator_id: US_CORE_CAPITAL_GOODS_ORDERS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: CENSUS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "census-eits:m3:NXA:NO"
+    canonical: {frequency: monthly, unit: millions_dollars, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: CENSUS_M3_RELEASE_DATE}
+    history: {earliest_primary_date: 1992-01-01, earliest_fallback_date: 1992-02-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/m3.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
+    freshness: *fresh_census
+    revision: *revision_census_m3
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2011-03-04]
+
+  - indicator_id: US_MANUFACTURING_CAPACITY
+    registry_policy_version: "stage2b5-v3"
+    primary_source: FEDERAL_RESERVE
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: CAPUTL.B00004.S
+    canonical: {frequency: monthly, unit: percent, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: G17_RELEASE_DATE}
+    history: {earliest_primary_date: 1948-01-01, earliest_fallback_date: 1948-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://www.federalreserve.gov/releases/g17/", verification_method: "reviewed G.17 B00004 SIC identity and full-file boundary"}
+    freshness: *fresh_fed
+    revision: *revision_fed
+    comparison: {mode: SOURCE_ROUNDING, absolute_tolerance: 0.001, relative_tolerance: 0, source_rounding_allowed: true, distribution_lag_policy: {allowed_days: 3, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2019-07-16]
+
+  - indicator_id: US_HOUSING_STARTS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: CENSUS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "census-eits:resconst:ASTARTS:TOTAL"
+    canonical: {frequency: monthly, unit: thousands_units, seasonal_adjustment: seasonally_adjusted_annual_rate, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: CENSUS_NEW_RESIDENTIAL_CONSTRUCTION_RELEASE_DATE}
+    history: {earliest_primary_date: 1959-01-01, earliest_fallback_date: 1959-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/resconst.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
+    freshness: *fresh_census
+    revision: *revision_census_nrc
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 5, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [1992-07-16]
+
+  - indicator_id: US_BUILDING_PERMITS
+    registry_policy_version: "stage2b5-v3"
+    primary_source: CENSUS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "census-eits:resconst:APERMITS:TOTAL"
+    canonical: {frequency: monthly, unit: thousands_units, seasonal_adjustment: seasonally_adjusted_annual_rate, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: CENSUS_NEW_RESIDENTIAL_CONSTRUCTION_RELEASE_DATE}
+    history: {earliest_primary_date: 1960-01-01, earliest_fallback_date: 1960-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/resconst.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
+    freshness: *fresh_census
+    revision: *revision_census_nrc
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 8, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2011-12-23]
+
+  - indicator_id: US_BUSINESS_INVENTORIES
+    registry_policy_version: "stage2b5-v3"
+    primary_source: CENSUS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "census-eits:mtis:TOTBUS:IM"
+    canonical: {frequency: monthly, unit: millions_dollars, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: CENSUS_MTIS_RELEASE_DATE}
+    history: {earliest_primary_date: 1992-01-01, earliest_fallback_date: 1992-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/mtis.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
+    freshness: *fresh_census_mtis
+    revision: *revision_census_mtis
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-09-14]
+
+  - indicator_id: US_INVENTORY_SALES_RATIO
+    registry_policy_version: "stage2b5-v3"
+    primary_source: CENSUS
+    fallback_source: FRED_CURRENT
+    vintage_source: ALFRED_VINTAGE
+    mapping_type: DIRECT
+    primary_source_identity: "census-eits:mtis:TOTBUS:IR"
+    canonical: {frequency: monthly, unit: ratio, seasonal_adjustment: seasonally_adjusted, base_year: null}
+    date_semantics: {observation_date: MONTH_START, release_date: CENSUS_MTIS_RELEASE_DATE}
+    history: {earliest_primary_date: 1992-01-01, earliest_fallback_date: 1992-01-01, extension_policy: PRIMARY_ONLY, verification_source: "https://api.census.gov/data/timeseries/eits/mtis.html", verification_method: "reviewed Census Live Gate and dataset boundary"}
+    freshness: *fresh_census_mtis
+    revision: *revision_census_mtis
+    comparison: {mode: EXACT, absolute_tolerance: 0, relative_tolerance: 0, source_rounding_allowed: false, distribution_lag_policy: {allowed_days: 7, treatment: INFORMATIONAL_WITHIN_WINDOW}}
+    fallback: *fallback_official
+    vintage:
+      <<: *vintage_safe
+      validated_as_of_dates: [2010-11-15]

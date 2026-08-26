@@ -1,26 +1,28 @@
 # Official Source Cross-Validation
 
-BLS is primary, FRED is fallback, and ALFRED remains the on-demand historical vintage
-source for the 14 mapped indicators. Comparison never overwrites either source and never
-chooses a value automatically.
+The unified source registry defines primary, FRED current fallback, and ALFRED vintage
+roles across BLS, BEA, Census, Federal Reserve Board, and DOL. Comparison answers only
+whether independently stored sources agree. It never overwrites either source and never
+chooses a value for the resolver.
 
-Before numeric comparison, the service requires the configured unit and seasonal
-adjustment to match the indicator semantics. It currently supports the reviewed `identity`
-normalization rule only. Dates are read in bounded pages; no DataFrame or full-history
-in-memory join is used.
+Before numeric comparison, each provider adapter requires its reviewed identity, unit,
+scale, frequency, seasonal adjustment, and normalization evidence. Dates are processed in
+bounded pages without a full-history in-memory DataFrame join.
 
-| Status | Meaning | Typical quality severity |
+| Status | Meaning | Typical severity |
 | --- | --- | --- |
-| `match` | Same aligned value | none |
-| `match_with_rounding` | Absolute difference is within that indicator's YAML tolerance | none |
-| `distribution_lag` | Fresh BLS point is not yet present in FRED within its lag allowance | info |
-| `missing_in_bls` | FRED has an older point absent from the primary source | warning |
-| `missing_in_fred` | BLS point is absent from FRED beyond the lag allowance | warning |
-| `normalization_mismatch` | Units cannot be safely aligned | error |
-| `seasonal_adjustment_mismatch` | Adjustment scopes differ | error |
-| `source_value_conflict` | Comparable values exceed configured absolute tolerance | error |
-| `not_comparable` | Neither value exists or the normalization rule is unsupported | none/error |
+| `match` | Same aligned canonical value | none |
+| `match_with_rounding` | Difference is within registry-approved source rounding | none |
+| `distribution_lag` | Official point is not yet in FRED within its lag allowance | info |
+| `missing_in_primary_source` | FRED has an older point absent from official primary | warning |
+| `missing_in_fred` | Official point is absent from FRED beyond distribution allowance | warning |
+| `normalization_mismatch` | Units or scale cannot be safely aligned | error |
+| `seasonal_adjustment_mismatch` | Seasonal scopes differ | error |
+| `source_value_conflict` | Comparable values exceed registry tolerance | error |
+| `not_comparable` | Identity or normalization evidence is incomplete | none/error |
 
-Tolerance, distribution lag, revision lookback, and normalization rule are per mapping in
-`config/data_sources/bls.yaml`. A value conflict is excluded from automatic downstream
-selection; Stage 2B-1 has no scoring path in which it could participate.
+Tolerance and distribution-lag policy are owned only by
+`config/data_sources/source_registry.yaml`. Provider YAML owns transport identity and
+normalization evidence. BLS, Census, and DOL are exact with zero tolerance; BEA and
+Federal Reserve retain Live-validated source rounding. Any value, identity, normalization,
+or seasonal conflict fails resolution closed and cannot activate fallback.

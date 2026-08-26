@@ -55,12 +55,11 @@ def test_comparison_classifies_match_rounding_lag_missing_and_conflict(
     assert summary.results[0]["counts"] == {
         "distribution_lag": 1,
         "match": 1,
-        "match_with_rounding": 1,
         "missing_in_bls": 1,
         "missing_in_fred": 1,
-        "source_value_conflict": 1,
+        "source_value_conflict": 2,
     }
-    assert summary.quality_event_count == 4
+    assert summary.quality_event_count == 5
 
 
 @pytest.mark.integration

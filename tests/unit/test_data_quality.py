@@ -2,7 +2,12 @@
 
 from datetime import date
 
-from app.data_quality.checks import QUALITY_RULES, check_freshness, check_observation_batch
+from app.data_quality.checks import (
+    QUALITY_RULES,
+    check_freshness,
+    check_observation_batch,
+    duplicate_vintage_issue,
+)
 from app.data_sources.fred.schemas import FredObservation
 
 
@@ -89,3 +94,24 @@ def test_freshness_distinguishes_absent_and_stale_series() -> None:
 
     assert absent[0].event_type == "no_recent_observations"
     assert stale[0].event_type == "stale_series"
+
+
+def test_duplicate_vintage_fingerprint_preserves_source_separated_grain() -> None:
+    fred = duplicate_vintage_issue(
+        "US_TEST",
+        observation_date=date(2025, 1, 1),
+        vintage_date=date(2025, 2, 1),
+        revision_number=0,
+        source="fred",
+    )
+    official = duplicate_vintage_issue(
+        "US_TEST",
+        observation_date=date(2025, 1, 1),
+        vintage_date=date(2025, 2, 1),
+        revision_number=0,
+        source="bls",
+    )
+
+    assert fred.details["source"] == "fred"
+    assert official.details["source"] == "bls"
+    assert fred.fingerprint != official.fingerprint

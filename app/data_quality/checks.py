@@ -354,13 +354,23 @@ def raw_hash_conflict_issue(
 
 
 def duplicate_vintage_issue(
-    indicator_id: str, *, observation_date: date, vintage_date: date
+    indicator_id: str,
+    *,
+    observation_date: date,
+    vintage_date: date,
+    revision_number: int,
+    source: str,
 ) -> QualityIssue:
-    """Represent duplicate logical vintage rows."""
+    """Represent duplicate rows at the source-separated vintage grain."""
     return QualityIssue(
         indicator_id=indicator_id,
         event_type="duplicate_vintage",
         severity="error",
         message="Duplicate observation vintage detected",
-        details={"observation_date": observation_date, "vintage_date": vintage_date},
+        details={
+            "observation_date": observation_date,
+            "vintage_date": vintage_date,
+            "revision_number": revision_number,
+            "source": source,
+        },
     )
