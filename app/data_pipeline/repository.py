@@ -9,6 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import ObservationWriteResult, SyncSummary
+from app.data_quality.scope import (
+    PITAvailabilityStatus,
+    QualityScope,
+    RuntimeDomain,
+    audit_request_metadata,
+)
 from app.data_sources.bea.exceptions import BeaError, BeaRequestError
 from app.data_sources.bea.schemas import BeaPayload
 from app.data_sources.bls.exceptions import BlsRequestError
@@ -61,15 +67,30 @@ def finish_sync_run(session: Session, record: SyncRun, summary: SyncSummary) -> 
     session.flush()
 
 
-def record_successful_request(session: Session, run_id: UUID, payload: FredPayload) -> None:
+def record_successful_request(
+    session: Session,
+    run_id: UUID,
+    payload: FredPayload,
+    *,
+    quality_scope: QualityScope = QualityScope.CURRENT_RUNTIME,
+    runtime_domain: RuntimeDomain = RuntimeDomain.FRED_CURRENT,
+    pit_status: PITAvailabilityStatus | None = None,
+    runtime_blocking: bool = True,
+) -> None:
     """Persist a successful request without secrets."""
+    audit_parameters = audit_request_metadata(
+        quality_scope=quality_scope,
+        runtime_domain=runtime_domain,
+        pit_status=pit_status,
+        runtime_blocking=runtime_blocking,
+    )
     session.add(
         DataSourceRequest(
             sync_run_id=run_id,
             source="fred",
             endpoint=payload.endpoint,
             series_id=payload.series_id,
-            request_parameters_json=payload.sanitized_parameters,
+            request_parameters_json={**payload.sanitized_parameters, **audit_parameters},
             started_at=payload.started_at,
             finished_at=payload.finished_at,
             http_status=payload.status_code,
@@ -334,15 +355,30 @@ def record_failed_request(
     series_id: str,
     parameters: dict[str, Any],
     error: Exception,
+    quality_scope: QualityScope = QualityScope.CURRENT_RUNTIME,
+    runtime_domain: RuntimeDomain = RuntimeDomain.FRED_CURRENT,
+    pit_status: PITAvailabilityStatus | None = None,
+    runtime_blocking: bool = True,
 ) -> None:
     """Persist sanitized failure evidence when no successful payload exists."""
     now = datetime.now(UTC)
-    safe = {
+    safe: dict[str, Any] = {
         key: value.isoformat() if isinstance(value, (date, datetime)) else value
         for key, value in parameters.items()
         if key.lower() != "api_key"
     }
+    safe.update(
+        audit_request_metadata(
+            quality_scope=quality_scope,
+            runtime_domain=runtime_domain,
+            pit_status=pit_status,
+            runtime_blocking=runtime_blocking,
+        )
+    )
     status_code = error.status_code if isinstance(error, FredRequestError) else None
+    if status_code is None:
+        candidate_status = getattr(error, "http_status", None)
+        status_code = candidate_status if isinstance(candidate_status, int) else None
     attempt_count = error.attempt_count if isinstance(error, FredRequestError) else 1
     session.add(
         DataSourceRequest(
@@ -357,7 +393,11 @@ def record_failed_request(
             success=False,
             attempt_count=attempt_count,
             error_type=type(error).__name__,
-            error_message=str(error),
+            error_message=(
+                f"PIT_{pit_status.value}"
+                if quality_scope is QualityScope.PIT_AVAILABILITY and pit_status is not None
+                else str(error)
+            ),
         )
     )
 

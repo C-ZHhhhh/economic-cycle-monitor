@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_request_session
 from app.data_quality.repository import list_quality_events
+from app.data_quality.scope import QualityScope
 
 router = APIRouter()
 SessionDependency = Annotated[Session, Depends(get_request_session)]
@@ -18,6 +19,7 @@ def data_quality_index(
     indicator_id: str | None = None,
     severity: str | None = None,
     event_type: str | None = None,
+    quality_scope: QualityScope = QualityScope.CURRENT_RUNTIME,
     unresolved_only: bool = False,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
@@ -42,6 +44,7 @@ def data_quality_index(
             severity=severity,
             event_type=event_type,
             unresolved_only=unresolved_only,
+            quality_scope=quality_scope,
             offset=offset,
             limit=limit,
         )

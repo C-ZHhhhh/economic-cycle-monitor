@@ -7,7 +7,10 @@ from app.data_quality.checks import (
     check_freshness,
     check_observation_batch,
     duplicate_vintage_issue,
+    pit_availability_issue,
+    source_unavailable_issue,
 )
+from app.data_quality.scope import PITAvailabilityStatus, SafeErrorCategory
 from app.data_sources.fred.schemas import FredObservation
 
 
@@ -23,8 +26,8 @@ def _observation(observation_date: str, value: str) -> FredObservation:
 
 
 def test_all_stage_two_and_official_source_quality_rules_are_registered() -> None:
-    assert len(QUALITY_RULES) == 38
-    assert len(set(QUALITY_RULES)) == 38
+    assert len(QUALITY_RULES) == 39
+    assert len(set(QUALITY_RULES)) == 39
     assert {
         "missing_value",
         "duplicate_observation",
@@ -39,6 +42,7 @@ def test_all_stage_two_and_official_source_quality_rules_are_registered() -> Non
         "non_monotonic_dates",
         "empty_api_response",
         "source_unavailable",
+        "pit_availability_failure",
         "raw_response_hash_conflict",
         "duplicate_vintage",
         "source_mapping_missing",
@@ -115,3 +119,44 @@ def test_duplicate_vintage_fingerprint_preserves_source_separated_grain() -> Non
     assert fred.details["source"] == "fred"
     assert official.details["source"] == "bls"
     assert fred.fingerprint != official.fingerprint
+
+
+def test_pit_fingerprint_preserves_scope_date_status_and_safe_category() -> None:
+    base = pit_availability_issue(
+        "US_REAL_GDP",
+        as_of=date(2000, 1, 1),
+        status=PITAvailabilityStatus.OUTSIDE_COVERAGE,
+        safe_error_category=SafeErrorCategory.COVERAGE,
+        http_status=400,
+        runtime_blocking=False,
+    )
+    repeat = pit_availability_issue(
+        "US_REAL_GDP",
+        as_of=date(2000, 1, 1),
+        status=PITAvailabilityStatus.OUTSIDE_COVERAGE,
+        safe_error_category=SafeErrorCategory.COVERAGE,
+        http_status=400,
+        runtime_blocking=False,
+    )
+    another_date = pit_availability_issue(
+        "US_REAL_GDP",
+        as_of=date(2000, 1, 2),
+        status=PITAvailabilityStatus.OUTSIDE_COVERAGE,
+        safe_error_category=SafeErrorCategory.COVERAGE,
+        http_status=400,
+        runtime_blocking=False,
+    )
+    another_status = pit_availability_issue(
+        "US_REAL_GDP",
+        as_of=date(2000, 1, 1),
+        status=PITAvailabilityStatus.NO_VINTAGE,
+        safe_error_category=SafeErrorCategory.COVERAGE,
+        http_status=400,
+        runtime_blocking=False,
+    )
+    current = source_unavailable_issue("US_REAL_GDP", RuntimeError("offline"))
+
+    assert base.fingerprint == repeat.fingerprint
+    assert len({base.fingerprint, another_date.fingerprint, another_status.fingerprint}) == 3
+    assert base.fingerprint != current.fingerprint
+    assert base.details["classification_version"] == "dlcr-002-v1"

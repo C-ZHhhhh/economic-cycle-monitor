@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
+from app.data_pipeline.pit import PITAvailabilityFailure
 from app.data_pipeline.repository import (
     finish_sync_run,
     latest_observation_date,
@@ -27,11 +28,22 @@ from app.data_pipeline.schemas import (
 from app.data_quality.checks import (
     check_metadata_validation,
     check_observation_batch,
+    pit_availability_issue,
     source_unavailable_issue,
 )
 from app.data_quality.repository import persist_quality_issues, reconcile_quality_issues
+from app.data_quality.scope import (
+    PITAvailabilityStatus,
+    QualityScope,
+    RuntimeDomain,
+    SafeErrorCategory,
+)
 from app.data_sources.fred.client import FredClient
-from app.data_sources.fred.exceptions import FredResponseError
+from app.data_sources.fred.exceptions import (
+    FredConfigurationError,
+    FredRequestError,
+    FredResponseError,
+)
 from app.data_sources.fred.metadata import validate_series_metadata
 from app.data_sources.fred.schemas import (
     FredObservation,
@@ -327,7 +339,12 @@ class FredPipelineService:
         run = start_sync_run(
             self.session,
             "fetch_fred_vintage",
-            {"indicator_id": indicator_id, "vintage_date": vintage_date.isoformat()},
+            {
+                "indicator_id": indicator_id,
+                "vintage_date": vintage_date.isoformat(),
+                "quality_scope": QualityScope.PIT_AVAILABILITY.value,
+                "runtime_domain": RuntimeDomain.ALFRED_VINTAGE.value,
+            },
             len(indicators),
         )
         summary = SyncSummary(
@@ -354,8 +371,52 @@ class FredPipelineService:
                 )
                 observations = [item for item in observations if item.date <= vintage_date]
                 if not any(item.value is not None for item in observations):
-                    raise FredResponseError("ALFRED snapshot returned no usable observations")
-                record_successful_request(self.session, run.run_id, payload)
+                    (
+                        coverage,
+                        coverage_is_authoritative,
+                    ) = await self._classify_from_vintage_coverage(
+                        summary,
+                        run.run_id,
+                        indicator,
+                        vintage_date,
+                    )
+                    if coverage is not None:
+                        empty_status, empty_category, empty_blocking = coverage
+                    elif coverage_is_authoritative:
+                        empty_status = PITAvailabilityStatus.EMPTY_INFORMATION_SET
+                        empty_category = SafeErrorCategory.EMPTY
+                        empty_blocking = False
+                    else:
+                        empty_status = PITAvailabilityStatus.UNKNOWN_FAILURE
+                        empty_category = SafeErrorCategory.UNKNOWN
+                        empty_blocking = True
+                    record_successful_request(
+                        self.session,
+                        run.run_id,
+                        payload,
+                        quality_scope=QualityScope.PIT_AVAILABILITY,
+                        runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+                        pit_status=empty_status,
+                        runtime_blocking=empty_blocking,
+                    )
+                    summary.request_count += 1
+                    summary.cache_hit_count += int(payload.from_cache)
+                    raise PITAvailabilityFailure(
+                        empty_status,
+                        safe_error_category=empty_category,
+                        http_status=payload.status_code,
+                        runtime_blocking=empty_blocking,
+                        request_recorded=True,
+                    )
+                record_successful_request(
+                    self.session,
+                    run.run_id,
+                    payload,
+                    quality_scope=QualityScope.PIT_AVAILABILITY,
+                    runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+                    pit_status=PITAvailabilityStatus.AVAILABLE,
+                    runtime_blocking=False,
+                )
                 summary.request_count = 1
                 summary.cache_hit_count = int(payload.from_cache)
                 write = persist_as_known_observations(
@@ -380,21 +441,232 @@ class FredPipelineService:
                     {
                         "indicator_id": indicator_id,
                         "vintage_date": vintage_date,
+                        "pit_availability_status": PITAvailabilityStatus.AVAILABLE.value,
                         **write.model_dump(),
                     }
                 )
             except Exception as error:
-                self._record_failure(
+                status, category, http_status, runtime_blocking = self._classify_pit_error(error)
+                if isinstance(error, FredRequestError) and error.status_code == 400:
+                    (
+                        coverage,
+                        _coverage_is_authoritative,
+                    ) = await self._classify_from_vintage_coverage(
+                        summary,
+                        run.run_id,
+                        indicator,
+                        vintage_date,
+                    )
+                    if coverage is not None:
+                        status, category, runtime_blocking = coverage
+                self._record_pit_failure(
                     summary,
                     run.run_id,
                     indicator,
                     "series/observations",
                     {"realtime_start": vintage_date, "realtime_end": vintage_date},
                     error,
+                    vintage_date=vintage_date,
+                    status=status,
+                    safe_error_category=category,
+                    http_status=http_status,
+                    runtime_blocking=runtime_blocking,
                 )
         self._finish_status(summary)
         finish_sync_run(self.session, run, summary)
         return summary
+
+    @staticmethod
+    def _classify_pit_error(
+        error: Exception,
+    ) -> tuple[PITAvailabilityStatus, SafeErrorCategory, int | None, bool]:
+        """Map only safely evidenced failures; ambiguous HTTP 400 remains unknown."""
+        if isinstance(error, PITAvailabilityFailure):
+            return (
+                error.status,
+                error.safe_error_category,
+                error.http_status,
+                error.runtime_blocking,
+            )
+        if isinstance(error, FredConfigurationError):
+            return (
+                PITAvailabilityStatus.AUTHENTICATION_FAILURE,
+                SafeErrorCategory.AUTHENTICATION,
+                None,
+                True,
+            )
+        if isinstance(error, FredRequestError):
+            if error.status_code in {401, 403}:
+                return (
+                    PITAvailabilityStatus.AUTHENTICATION_FAILURE,
+                    SafeErrorCategory.AUTHENTICATION,
+                    error.status_code,
+                    True,
+                )
+            if error.status_code == 429:
+                return (
+                    PITAvailabilityStatus.TEMPORARY_REQUEST_FAILURE,
+                    SafeErrorCategory.RATE_LIMIT,
+                    error.status_code,
+                    True,
+                )
+            if error.status_code is None:
+                return (
+                    PITAvailabilityStatus.TEMPORARY_REQUEST_FAILURE,
+                    SafeErrorCategory.TRANSPORT,
+                    None,
+                    True,
+                )
+            if error.status_code >= 500:
+                return (
+                    PITAvailabilityStatus.TEMPORARY_REQUEST_FAILURE,
+                    SafeErrorCategory.SERVER,
+                    error.status_code,
+                    True,
+                )
+            return (
+                PITAvailabilityStatus.UNKNOWN_FAILURE,
+                SafeErrorCategory.UNKNOWN,
+                error.status_code,
+                True,
+            )
+        if isinstance(error, FredResponseError):
+            return (
+                PITAvailabilityStatus.MALFORMED_RESPONSE,
+                SafeErrorCategory.MALFORMED,
+                None,
+                True,
+            )
+        return (
+            PITAvailabilityStatus.UNKNOWN_FAILURE,
+            SafeErrorCategory.UNKNOWN,
+            None,
+            True,
+        )
+
+    async def _classify_from_vintage_coverage(
+        self,
+        summary: SyncSummary,
+        run_id: Any,
+        indicator: IndicatorRegistry,
+        vintage_date: date,
+    ) -> tuple[tuple[PITAvailabilityStatus, SafeErrorCategory, bool] | None, bool]:
+        """Use official vintage dates to classify ambiguous or empty PIT results."""
+        assert indicator.fred_series_id is not None
+        try:
+            dates, payload = await self.client.get_vintage_dates(indicator.fred_series_id)
+        except Exception as coverage_error:
+            status, _category, _http_status, runtime_blocking = self._classify_pit_error(
+                coverage_error
+            )
+            record_failed_request(
+                self.session,
+                run_id,
+                endpoint="series/vintagedates",
+                series_id=indicator.fred_series_id,
+                parameters={},
+                error=coverage_error,
+                quality_scope=QualityScope.PIT_AVAILABILITY,
+                runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+                pit_status=status,
+                runtime_blocking=runtime_blocking,
+            )
+            summary.request_count += 1
+            return None, False
+        record_successful_request(
+            self.session,
+            run_id,
+            payload,
+            quality_scope=QualityScope.PIT_AVAILABILITY,
+            runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+            runtime_blocking=False,
+        )
+        summary.request_count += 1
+        summary.cache_hit_count += int(payload.from_cache)
+        if not dates:
+            return (
+                (
+                    PITAvailabilityStatus.NO_VINTAGE,
+                    SafeErrorCategory.COVERAGE,
+                    False,
+                ),
+                True,
+            )
+        if vintage_date < min(dates):
+            return (
+                (
+                    PITAvailabilityStatus.OUTSIDE_COVERAGE,
+                    SafeErrorCategory.COVERAGE,
+                    False,
+                ),
+                True,
+            )
+        return None, True
+
+    def _record_pit_failure(
+        self,
+        summary: SyncSummary,
+        run_id: Any,
+        indicator: IndicatorRegistry,
+        endpoint: str,
+        parameters: dict[str, Any],
+        error: Exception,
+        *,
+        vintage_date: date,
+        status: PITAvailabilityStatus,
+        safe_error_category: SafeErrorCategory,
+        http_status: int | None,
+        runtime_blocking: bool,
+    ) -> None:
+        """Persist one scoped PIT failure without changing current health evidence."""
+        summary.failure_count += 1
+        request_recorded = isinstance(error, PITAvailabilityFailure) and error.request_recorded
+        if not request_recorded:
+            summary.request_count += 1
+        summary.errors.append(
+            PipelineError(
+                indicator_id=indicator.indicator_id,
+                error_type=type(error).__name__,
+                message=f"PIT_{status.value}",
+                quality_scope=QualityScope.PIT_AVAILABILITY,
+                runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+                pit_availability_status=status,
+            )
+        )
+        summary.results.append(
+            {
+                "indicator_id": indicator.indicator_id,
+                "vintage_date": vintage_date,
+                "pit_availability_status": status.value,
+            }
+        )
+        if not request_recorded:
+            record_failed_request(
+                self.session,
+                run_id,
+                endpoint=endpoint,
+                series_id=indicator.fred_series_id or "",
+                parameters=parameters,
+                error=error,
+                quality_scope=QualityScope.PIT_AVAILABILITY,
+                runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+                pit_status=status,
+                runtime_blocking=runtime_blocking,
+            )
+        summary.quality_event_count += persist_quality_issues(
+            self.session,
+            [
+                pit_availability_issue(
+                    indicator.indicator_id,
+                    as_of=vintage_date,
+                    status=status,
+                    safe_error_category=safe_error_category,
+                    http_status=http_status,
+                    runtime_blocking=runtime_blocking,
+                )
+            ],
+            run_id=run_id,
+        )
 
     def _record_failure(
         self,

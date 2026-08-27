@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data_quality.repository import list_quality_events
+from app.data_quality.scope import RuntimeDomain
 from app.database.models import IndicatorRegistry
 from app.indicators.config import load_indicator_catalog
 from app.source_mappings.config import SOURCE_MAPPING_PATHS, load_source_mapping_catalog_for
@@ -14,6 +15,7 @@ from app.source_registry.config import load_source_registry
 from app.source_registry.health import (
     historical_audit_event_is_current,
     indicator_source_health,
+    provider_health,
 )
 from app.source_registry.schemas import ReadinessStatus, RuntimeHealth, SourceRegistryCatalog
 
@@ -62,17 +64,33 @@ def validate_data_layer(
                 f"CURRENT_{event.severity.upper()}:{event.event_type}:{event.indicator_id}"
             )
 
-    pit_blockers = [
+    pit_contract_blockers = [
         f"PIT_COVERAGE_UNVERIFIED:{policy.indicator_id}"
         for policy in source_registry.policies
         if policy.vintage.backtest_safety == "UNVERIFIED"
     ]
+    alfred_health = provider_health(
+        session,
+        "fred",
+        runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+    )
+    pit_runtime_blockers = (
+        []
+        if alfred_health.runtime_health is RuntimeHealth.HEALTHY
+        else [f"PIT_RUNTIME_{alfred_health.runtime_health.value}:ALFRED_VINTAGE"]
+    )
+    pit_blockers = [*pit_contract_blockers, *pit_runtime_blockers]
     return ReadinessStatus(
         registry_policy_version=source_registry.registry_policy_version,
         registry_hash=source_registry.registry_hash,
         current_data_ready=not current_blockers,
+        pit_contract_ready=not pit_contract_blockers,
+        pit_runtime_ready=not pit_runtime_blockers,
+        pit_runtime_health=alfred_health.runtime_health,
         pit_backtest_ready=not pit_blockers,
         current_blockers=sorted(set(current_blockers)),
         pit_blockers=pit_blockers,
+        pit_contract_blockers=pit_contract_blockers,
+        pit_runtime_blockers=pit_runtime_blockers,
         degraded_nonblocking=degraded,
     )

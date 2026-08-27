@@ -11,14 +11,30 @@ from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.data_quality.scope import (
+    AUDIT_PIT_STATUS,
+    AUDIT_QUALITY_SCOPE,
+    AUDIT_RUNTIME_BLOCKING,
+    AUDIT_RUNTIME_DOMAIN,
+    PITAvailabilityStatus,
+    QualityScope,
+    RuntimeDomain,
+)
 from app.data_sources.fred.cache import FredFileCache
 from app.data_sources.fred.client import FredClient
 from app.data_sources.fred.raw_store import FredRawStore
-from app.database.models import DataSourceRequest, ObservationVintage, RawObservation, SyncRun
+from app.database.models import (
+    DataQualityEvent,
+    DataSourceRequest,
+    ObservationVintage,
+    RawObservation,
+    SyncRun,
+)
 from app.indicators.config import load_indicator_catalog
 from app.indicators.service import seed_indicator_catalog
 from app.settings import Settings
 from app.source_registry.config import load_source_registry
+from app.source_registry.health import provider_health
 from app.source_registry.pit import PITSnapshotFetchFailed, get_effective_observations_on_demand
 from app.source_registry.resolver import (
     PITCoverageUnverified,
@@ -26,7 +42,7 @@ from app.source_registry.resolver import (
     PITSnapshotNotCached,
     get_effective_observations,
 )
-from app.source_registry.schemas import SourceRegistryCatalog
+from app.source_registry.schemas import RuntimeHealth, SourceRegistryCatalog
 
 pytestmark = pytest.mark.integration
 
@@ -410,11 +426,13 @@ async def test_malformed_or_empty_business_response_fails_closed(
 ) -> None:
     registry = _seed(postgres_session)
 
-    def handler(_: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("series/vintagedates"):
+            return httpx.Response(200, json={"vintage_dates": ["2010-01-01"]})
         return httpx.Response(200, json=body)
 
     async with _client(tmp_path, httpx.MockTransport(handler), cache_enabled=False) as client:
-        with pytest.raises(PITSnapshotFetchFailed, match="PIT_SNAPSHOT_FETCH_FAILED"):
+        with pytest.raises(PITSnapshotFetchFailed) as captured:
             await get_effective_observations_on_demand(
                 postgres_session,
                 "US_REAL_GDP",
@@ -425,11 +443,43 @@ async def test_malformed_or_empty_business_response_fails_closed(
                 settings=settings,
                 client=client,
             )
+    expected = (
+        PITAvailabilityStatus.MALFORMED_RESPONSE
+        if body.get("observations")
+        not in (
+            [],
+            [
+                {
+                    "realtime_start": "2020-07-19",
+                    "realtime_end": "2020-07-19",
+                    "date": "2020-01-01",
+                    "value": ".",
+                }
+            ],
+        )
+        else PITAvailabilityStatus.EMPTY_INFORMATION_SET
+    )
+    assert captured.value.availability_status is expected
     assert postgres_session.scalar(select(ObservationVintage.id)) is None
+    event = postgres_session.scalar(
+        select(DataQualityEvent).where(DataQualityEvent.event_type == "pit_availability_failure")
+    )
+    assert event is not None
+    assert event.details_json["pit_availability_status"] == expected.value
+    alfred = provider_health(
+        postgres_session,
+        "fred",
+        runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+    )
+    assert alfred.runtime_health is (
+        RuntimeHealth.HEALTHY
+        if expected is PITAvailabilityStatus.EMPTY_INFORMATION_SET
+        else RuntimeHealth.UNAVAILABLE
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status_code", [400, 403, 429, 500])
+@pytest.mark.parametrize("status_code", [400, 401, 403, 429, 500])
 async def test_http_failures_never_fall_back_to_current_snapshot(
     postgres_session: Session,
     settings: Settings,
@@ -466,12 +516,165 @@ async def test_http_failures_never_fall_back_to_current_snapshot(
                 client=client,
             )
     assert postgres_session.scalar(select(ObservationVintage.id)) is None
-    request = postgres_session.scalar(select(DataSourceRequest))
+    request = postgres_session.scalar(
+        select(DataSourceRequest).where(DataSourceRequest.endpoint == "series/observations")
+    )
     assert request is not None
     assert request.request_parameters_json == {
         "realtime_start": "2020-07-19",
         "realtime_end": "2020-07-19",
+        AUDIT_QUALITY_SCOPE: QualityScope.PIT_AVAILABILITY.value,
+        AUDIT_RUNTIME_DOMAIN: RuntimeDomain.ALFRED_VINTAGE.value,
+        AUDIT_PIT_STATUS: (
+            PITAvailabilityStatus.AUTHENTICATION_FAILURE.value
+            if status_code in {401, 403}
+            else PITAvailabilityStatus.TEMPORARY_REQUEST_FAILURE.value
+            if status_code in {429, 500}
+            else PITAvailabilityStatus.UNKNOWN_FAILURE.value
+        ),
+        AUDIT_RUNTIME_BLOCKING: True,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("vintage_dates", "as_of", "expected"),
+    [
+        (["2010-01-01", "2010-02-01"], date(1940, 1, 1), PITAvailabilityStatus.OUTSIDE_COVERAGE),
+        ([], date(1940, 1, 1), PITAvailabilityStatus.NO_VINTAGE),
+    ],
+)
+async def test_http_400_uses_official_coverage_evidence_for_expected_unavailability(
+    postgres_session: Session,
+    settings: Settings,
+    tmp_path: Path,
+    vintage_dates: list[str],
+    as_of: date,
+    expected: PITAvailabilityStatus,
+) -> None:
+    registry = _seed(postgres_session)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("series/vintagedates"):
+            return httpx.Response(200, json={"vintage_dates": vintage_dates})
+        return httpx.Response(400)
+
+    async with _client(tmp_path, httpx.MockTransport(handler), cache_enabled=False) as client:
+        for _ in range(2):
+            with pytest.raises(PITSnapshotFetchFailed) as captured:
+                await get_effective_observations_on_demand(
+                    postgres_session,
+                    "US_REAL_GDP",
+                    date(1940, 1, 1),
+                    date(1940, 1, 1),
+                    as_of,
+                    registry=registry,
+                    settings=settings,
+                    client=client,
+                )
+            assert captured.value.availability_status is expected
+
+    events = postgres_session.scalars(
+        select(DataQualityEvent).where(DataQualityEvent.event_type == "pit_availability_failure")
+    ).all()
+    assert len(events) == 1
+    assert events[0].details_json == {
+        "quality_scope": QualityScope.PIT_AVAILABILITY.value,
+        "runtime_domain": RuntimeDomain.ALFRED_VINTAGE.value,
+        "as_of": as_of.isoformat(),
+        "pit_availability_status": expected.value,
+        "safe_error_category": "COVERAGE",
+        "http_status": 400,
+        "runtime_blocking": False,
+        "classification_version": "dlcr-002-v1",
+    }
+    assert calls.count("/fred/series/observations") == 2
+    assert calls.count("/fred/series/vintagedates") == 2
+    assert (
+        provider_health(
+            postgres_session,
+            "fred",
+            runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
+        ).runtime_health
+        is RuntimeHealth.HEALTHY
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_400_with_insufficient_coverage_evidence_remains_unknown(
+    postgres_session: Session,
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    registry = _seed(postgres_session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("series/vintagedates"):
+            return httpx.Response(200, json={"vintage_dates": ["2010-01-01"]})
+        return httpx.Response(400)
+
+    async with _client(tmp_path, httpx.MockTransport(handler), cache_enabled=False) as client:
+        with pytest.raises(PITSnapshotFetchFailed) as captured:
+            await get_effective_observations_on_demand(
+                postgres_session,
+                "US_REAL_GDP",
+                date(2020, 1, 1),
+                date(2020, 1, 1),
+                date(2020, 7, 19),
+                registry=registry,
+                settings=settings,
+                client=client,
+            )
+    assert captured.value.availability_status is PITAvailabilityStatus.UNKNOWN_FAILURE
+    event = postgres_session.scalar(
+        select(DataQualityEvent).where(DataQualityEvent.event_type == "pit_availability_failure")
+    )
+    assert event is not None
+    assert event.details_json["runtime_blocking"] is True
+
+
+@pytest.mark.asyncio
+async def test_pit_timeout_is_temporary_and_audit_is_url_and_credential_free(
+    postgres_session: Session,
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    registry = _seed(postgres_session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("safe fixture", request=request)
+
+    async with _client(tmp_path, httpx.MockTransport(handler), cache_enabled=False) as client:
+        with pytest.raises(PITSnapshotFetchFailed) as captured:
+            await get_effective_observations_on_demand(
+                postgres_session,
+                "US_REAL_GDP",
+                date(2020, 1, 1),
+                date(2020, 1, 1),
+                date(2020, 7, 19),
+                registry=registry,
+                settings=settings,
+                client=client,
+            )
+    assert captured.value.availability_status is PITAvailabilityStatus.TEMPORARY_REQUEST_FAILURE
+    request = postgres_session.scalar(select(DataSourceRequest))
+    run = postgres_session.scalar(select(SyncRun))
+    event = postgres_session.scalar(select(DataQualityEvent))
+    assert request is not None and run is not None and event is not None
+    audit = json.dumps(
+        {
+            "endpoint": request.endpoint,
+            "parameters": request.request_parameters_json,
+            "error": request.error_message,
+            "run_errors": run.error_summary_json,
+            "event": event.details_json,
+        }
+    )
+    assert TEST_KEY not in audit
+    assert "fred.invalid" not in audit
+    assert "api_key" not in audit
 
 
 @pytest.mark.asyncio
@@ -513,7 +716,7 @@ async def test_non_safe_capabilities_fail_before_transport(
         raise AssertionError("unsafe capability must not call ALFRED")
 
     async with _client(tmp_path, httpx.MockTransport(handler)) as client:
-        with pytest.raises(PITCoverageUnverified, match="PIT_COVERAGE_UNVERIFIED"):
+        with pytest.raises(PITCoverageUnverified, match="PIT_COVERAGE_UNVERIFIED") as captured:
             await get_effective_observations_on_demand(
                 postgres_session,
                 "US_REAL_GDP",
@@ -524,6 +727,7 @@ async def test_non_safe_capabilities_fail_before_transport(
                 settings=settings,
                 client=client,
             )
+    assert captured.value.availability_status is PITAvailabilityStatus.UNSAFE
 
 
 @pytest.mark.asyncio
@@ -612,6 +816,9 @@ async def test_request_audit_and_public_errors_are_secret_free(
     assert TEST_KEY not in evidence
     assert "api_key" not in request.request_parameters_json
     assert request.request_parameters_json["realtime_start"] == "2020-07-19"
+    assert request.request_parameters_json[AUDIT_QUALITY_SCOPE] == QualityScope.PIT_AVAILABILITY
+    assert request.request_parameters_json[AUDIT_RUNTIME_DOMAIN] == RuntimeDomain.ALFRED_VINTAGE
+    assert request.request_parameters_json[AUDIT_PIT_STATUS] == PITAvailabilityStatus.AVAILABLE
 
 
 @pytest.mark.asyncio

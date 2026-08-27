@@ -5,6 +5,7 @@ from datetime import date, datetime
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.service import FredPipelineService
+from app.data_quality.scope import PITAvailabilityStatus
 from app.data_sources.fred.client import FredClient
 from app.data_sources.fred.factory import create_fred_client
 from app.settings import Settings
@@ -19,6 +20,12 @@ from app.source_registry.schemas import EffectiveObservation, SourceRegistryCata
 
 class PITSnapshotFetchFailed(SourceResolutionError):
     """An on-demand ALFRED snapshot could not be materialized safely."""
+
+    def __init__(self, indicator_id: str, as_of: date, status: PITAvailabilityStatus) -> None:
+        super().__init__(f"PIT_{status.value}:{indicator_id}:{as_of.isoformat()}")
+        self.indicator_id = indicator_id
+        self.as_of = as_of
+        self.availability_status = status
 
 
 async def _fetch_snapshot(
@@ -37,10 +44,12 @@ async def _fetch_snapshot(
         registry_hash=registry.registry_hash,
     )
     if summary.status != "succeeded" or summary.failure_count:
-        error_type = summary.errors[0].error_type if summary.errors else "UnknownError"
-        raise PITSnapshotFetchFailed(
-            f"PIT_SNAPSHOT_FETCH_FAILED:{indicator_id}:{as_of.isoformat()}:{error_type}"
+        status = (
+            summary.errors[0].pit_availability_status
+            if summary.errors and summary.errors[0].pit_availability_status is not None
+            else PITAvailabilityStatus.UNKNOWN_FAILURE
         )
+        raise PITSnapshotFetchFailed(indicator_id, as_of, status)
 
 
 async def get_effective_observations_on_demand(

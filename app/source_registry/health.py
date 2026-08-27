@@ -8,6 +8,14 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.data_quality.scope import (
+    QualityScope,
+    RuntimeDomain,
+    quality_event_scope,
+    request_blocks_runtime,
+    request_is_runtime_evidence,
+    request_runtime_domain,
+)
 from app.database.models import (
     DataQualityEvent,
     DataSourceRequest,
@@ -121,21 +129,79 @@ def freshness_expectation(
 
 
 def _latest_request(
-    session: Session, source: str, *, success: bool | None = None
+    session: Session,
+    source: str,
+    *,
+    success: bool | None = None,
+    runtime_domain: RuntimeDomain | None = None,
 ) -> DataSourceRequest | None:
-    statement = select(DataSourceRequest).where(DataSourceRequest.source == source)
-    if success is not None:
-        statement = statement.where(DataSourceRequest.success.is_(success))
-    return session.scalar(statement.order_by(DataSourceRequest.started_at.desc()).limit(1))
+    """Return newest request evidence within one explicit or legacy runtime domain."""
+    selected_domain = (
+        runtime_domain
+        if runtime_domain is not None
+        else RuntimeDomain.FRED_CURRENT
+        if source == "fred"
+        else None
+    )
+    rows = session.execute(
+        select(DataSourceRequest, SyncRun.operation)
+        .outerjoin(SyncRun, DataSourceRequest.sync_run_id == SyncRun.run_id)
+        .where(DataSourceRequest.source == source)
+        .order_by(DataSourceRequest.started_at.desc(), DataSourceRequest.id.desc())
+    ).all()
+    for row in rows:
+        request: DataSourceRequest = row[0]
+        operation: str | None = row[1]
+        if success is not None and request.success is not success:
+            continue
+        if (
+            selected_domain is not None
+            and request_runtime_domain(request, operation) is not selected_domain
+        ):
+            continue
+        if selected_domain is RuntimeDomain.ALFRED_VINTAGE and not request_is_runtime_evidence(
+            request
+        ):
+            continue
+        return request
+    return None
 
 
-def provider_health(session: Session, source: str) -> HealthSnapshot:
+def provider_health(
+    session: Session,
+    source: str,
+    *,
+    runtime_domain: RuntimeDomain | None = None,
+) -> HealthSnapshot:
     """Compute provider-level availability without mutating registry policy."""
-    latest = _latest_request(session, source)
-    success = _latest_request(session, source, success=True)
+    selected_domain = (
+        runtime_domain
+        if runtime_domain is not None
+        else RuntimeDomain.FRED_CURRENT
+        if source == "fred"
+        else None
+    )
+    latest = _latest_request(session, source, runtime_domain=selected_domain)
+    success = _latest_request(
+        session,
+        source,
+        success=True,
+        runtime_domain=selected_domain,
+    )
+    run_operations: tuple[str, ...]
+    if selected_domain is RuntimeDomain.ALFRED_VINTAGE:
+        run_operations = ("fetch_fred_vintage",)
+    elif source == "fred":
+        run_operations = ("validate_fred_metadata", "backfill_fred", "sync_fred")
+    else:
+        run_operations = ()
     latest_run = session.scalar(
         select(SyncRun)
-        .where(SyncRun.operation.contains(source))
+        .where(
+            SyncRun.operation.in_(run_operations)
+            if run_operations
+            else SyncRun.operation.contains(source)
+        )
         .order_by(SyncRun.started_at.desc())
         .limit(1)
     )
@@ -143,6 +209,9 @@ def provider_health(session: Session, source: str) -> HealthSnapshot:
     if latest is None and success is None:
         state = RuntimeHealth.UNAVAILABLE
         reasons.append("NO_REQUEST_EVIDENCE")
+    elif latest is not None and not request_blocks_runtime(latest):
+        state = RuntimeHealth.HEALTHY
+        reasons.append("LATEST_REQUEST_IS_EXPECTED_PIT_UNAVAILABILITY")
     elif success is None:
         state = RuntimeHealth.UNAVAILABLE
         reasons.append("NO_SUCCESSFUL_REQUEST")
@@ -156,6 +225,7 @@ def provider_health(session: Session, source: str) -> HealthSnapshot:
         state = RuntimeHealth.HEALTHY
     return HealthSnapshot(
         source=source,
+        runtime_domain=selected_domain,
         mapping_quality=MappingQuality.VALID,
         runtime_health=state,
         latest_success_at=success.finished_at if success is not None else None,
@@ -281,6 +351,8 @@ def indicator_source_health(
 
 def historical_audit_event_is_current(session: Session, event: DataQualityEvent) -> bool:
     """Return false when a later provider success supersedes an immutable old failure."""
+    if quality_event_scope(session, event) is QualityScope.PIT_AVAILABILITY:
+        return False
     if event.event_type not in {"source_business_error", "source_series_unavailable"}:
         return event.resolved_at is None
     source = event.details_json.get("source")
