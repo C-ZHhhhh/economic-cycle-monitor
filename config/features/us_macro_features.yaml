@@ -1,0 +1,294 @@
+schema_version: "1.0.0"
+feature_spec_version: stage3a-v1
+formula_registry_version: stage3a-formulas-v1
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+
+indicators:
+  - indicator_id: US_REAL_GDP
+    economic_category: real_activity
+    archetype: QUARTERLY_REAL_ACTIVITY
+    features:
+      - {feature_id: US_REAL_GDP__GROWTH_QOQ_ANNUALIZED, display_name: Real GDP QoQ annualized growth, description: Annualized growth from the prior consecutive quarter, role: primary, formula_id: QUARTERLY_QOQ_ANNUALIZED, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_REAL_GDP__GROWTH_YOY, display_name: Real GDP YoY growth, description: Growth from the same quarter one year earlier, role: supporting, formula_id: QUARTERLY_YOY, window: 4, output_unit: percent}
+      - {feature_id: US_REAL_GDP__GROWTH_ACCEL_QOQ_1Q, display_name: Real GDP QoQ growth acceleration, description: Current QoQ annualized growth minus the preceding QoQ annualized growth, role: supporting, formula_id: GROWTH_ACCEL_QOQ_1Q, window: 1, output_unit: annualized_percentage_points}
+
+  - indicator_id: US_REAL_PCE
+    economic_category: real_activity
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_REAL_PCE__GROWTH_3M_ANNUALIZED, display_name: Real PCE 3M annualized growth, description: Three-month annualized real consumption growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_REAL_PCE__GROWTH_1M_ANNUALIZED, display_name: Real PCE 1M annualized growth, description: One-month annualized real consumption growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_REAL_PCE__GROWTH_6M_ANNUALIZED, display_name: Real PCE 6M annualized growth, description: Six-month annualized real consumption growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_REAL_PCE__GROWTH_YOY, display_name: Real PCE YoY growth, description: Real consumption growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_REAL_DISPOSABLE_INCOME
+    economic_category: real_activity
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_REAL_DISPOSABLE_INCOME__GROWTH_3M_ANNUALIZED, display_name: Real disposable income 3M annualized growth, description: Three-month annualized real disposable income growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_REAL_DISPOSABLE_INCOME__GROWTH_1M_ANNUALIZED, display_name: Real disposable income 1M annualized growth, description: One-month annualized growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_REAL_DISPOSABLE_INCOME__GROWTH_6M_ANNUALIZED, display_name: Real disposable income 6M annualized growth, description: Six-month annualized growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_REAL_DISPOSABLE_INCOME__GROWTH_YOY, display_name: Real disposable income YoY growth, description: Growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_INDUSTRIAL_PRODUCTION
+    economic_category: production
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_INDUSTRIAL_PRODUCTION__GROWTH_3M_ANNUALIZED, display_name: Industrial production 3M annualized growth, description: Three-month annualized production growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_INDUSTRIAL_PRODUCTION__GROWTH_1M_ANNUALIZED, display_name: Industrial production 1M annualized growth, description: One-month annualized production growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_INDUSTRIAL_PRODUCTION__GROWTH_6M_ANNUALIZED, display_name: Industrial production 6M annualized growth, description: Six-month annualized production growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_INDUSTRIAL_PRODUCTION__GROWTH_YOY, display_name: Industrial production YoY growth, description: Production growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_REAL_RETAIL_SALES
+    economic_category: real_activity
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_REAL_RETAIL_SALES__GROWTH_3M_ANNUALIZED, display_name: Real retail sales 3M annualized growth, description: Three-month annualized real retail sales growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_REAL_RETAIL_SALES__GROWTH_1M_ANNUALIZED, display_name: Real retail sales 1M annualized growth, description: One-month annualized real retail sales growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_REAL_RETAIL_SALES__GROWTH_6M_ANNUALIZED, display_name: Real retail sales 6M annualized growth, description: Six-month annualized real retail sales growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_REAL_RETAIL_SALES__GROWTH_YOY, display_name: Real retail sales YoY growth, description: Real retail sales growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_NONFARM_EMPLOYMENT
+    economic_category: labor
+    archetype: EMPLOYMENT_LEVEL
+    features:
+      - {feature_id: US_NONFARM_EMPLOYMENT__CHANGE_1M, display_name: Monthly payroll change, description: Absolute change in nonfarm employment from the prior month, role: primary, formula_id: DIFF_K, window: 1, output_unit: thousands_persons}
+      - {feature_id: US_NONFARM_EMPLOYMENT__AVG_CHANGE_3M, display_name: Three-month average payroll change, description: Average monthly payroll change across three consecutive months, role: supporting, formula_id: AVG_PERIOD_DIFF_K, window: 3, output_unit: thousands_persons}
+      - {feature_id: US_NONFARM_EMPLOYMENT__GROWTH_YOY, display_name: Payroll employment YoY growth, description: Percent growth in payroll employment from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_CPI
+    economic_category: inflation
+    archetype: PRICE_INDEX
+    features:
+      - {feature_id: US_CPI__INFLATION_3M_ANNUALIZED, display_name: CPI 3M annualized inflation, description: Three-month annualized CPI inflation, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_CPI__INFLATION_1M_ANNUALIZED, display_name: CPI 1M annualized inflation, description: One-month annualized CPI inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_CPI__INFLATION_6M_ANNUALIZED, display_name: CPI 6M annualized inflation, description: Six-month annualized CPI inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_CPI__INFLATION_YOY, display_name: CPI YoY inflation, description: CPI inflation from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_CORE_CPI
+    economic_category: inflation
+    archetype: PRICE_INDEX
+    features:
+      - {feature_id: US_CORE_CPI__INFLATION_3M_ANNUALIZED, display_name: Core CPI 3M annualized inflation, description: Three-month annualized core CPI inflation, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_CORE_CPI__INFLATION_1M_ANNUALIZED, display_name: Core CPI 1M annualized inflation, description: One-month annualized core CPI inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_CORE_CPI__INFLATION_6M_ANNUALIZED, display_name: Core CPI 6M annualized inflation, description: Six-month annualized core CPI inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_CORE_CPI__INFLATION_YOY, display_name: Core CPI YoY inflation, description: Core CPI inflation from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_PCE_PRICE
+    economic_category: inflation
+    archetype: PRICE_INDEX
+    features:
+      - {feature_id: US_PCE_PRICE__INFLATION_3M_ANNUALIZED, display_name: PCE price 3M annualized inflation, description: Three-month annualized PCE price inflation, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_PCE_PRICE__INFLATION_1M_ANNUALIZED, display_name: PCE price 1M annualized inflation, description: One-month annualized PCE price inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_PCE_PRICE__INFLATION_6M_ANNUALIZED, display_name: PCE price 6M annualized inflation, description: Six-month annualized PCE price inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_PCE_PRICE__INFLATION_YOY, display_name: PCE price YoY inflation, description: PCE price inflation from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_CORE_PCE_PRICE
+    economic_category: inflation
+    archetype: PRICE_INDEX
+    features:
+      - {feature_id: US_CORE_PCE_PRICE__INFLATION_3M_ANNUALIZED, display_name: Core PCE price 3M annualized inflation, description: Three-month annualized core PCE price inflation, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_CORE_PCE_PRICE__INFLATION_1M_ANNUALIZED, display_name: Core PCE price 1M annualized inflation, description: One-month annualized core PCE price inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_CORE_PCE_PRICE__INFLATION_6M_ANNUALIZED, display_name: Core PCE price 6M annualized inflation, description: Six-month annualized core PCE price inflation, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_CORE_PCE_PRICE__INFLATION_YOY, display_name: Core PCE price YoY inflation, description: Core PCE price inflation from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_PPI_COMMODITIES
+    economic_category: inflation
+    archetype: PRICE_INDEX
+    features:
+      - {feature_id: US_PPI_COMMODITIES__INFLATION_YOY, display_name: Commodity PPI YoY inflation, description: NSA commodity PPI inflation from one year earlier, role: primary, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+      - {feature_id: US_PPI_COMMODITIES__LEVEL, display_name: Commodity PPI level, description: Canonical NSA commodity PPI index level, role: supporting, formula_id: LEVEL, window: 1, output_unit: index}
+
+  - indicator_id: US_UNEMPLOYMENT_RATE
+    economic_category: labor
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_UNEMPLOYMENT_RATE__LEVEL, display_name: Unemployment rate level, description: Canonical unemployment rate level, role: primary, formula_id: LEVEL, window: 1, output_unit: percent}
+      - {feature_id: US_UNEMPLOYMENT_RATE__CHANGE_1M_PP, display_name: Unemployment rate 1M change, description: One-month unemployment-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: percentage_points}
+      - {feature_id: US_UNEMPLOYMENT_RATE__CHANGE_3M_PP, display_name: Unemployment rate 3M change, description: Three-month unemployment-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 3, output_unit: percentage_points}
+      - {feature_id: US_UNEMPLOYMENT_RATE__CHANGE_12M_PP, display_name: Unemployment rate 12M change, description: Twelve-month unemployment-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: percentage_points}
+
+  - indicator_id: US_U6_RATE
+    economic_category: labor
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_U6_RATE__LEVEL, display_name: U-6 rate level, description: Canonical U-6 labor underutilization rate, role: primary, formula_id: LEVEL, window: 1, output_unit: percent}
+      - {feature_id: US_U6_RATE__CHANGE_1M_PP, display_name: U-6 rate 1M change, description: One-month U-6 rate change, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: percentage_points}
+      - {feature_id: US_U6_RATE__CHANGE_3M_PP, display_name: U-6 rate 3M change, description: Three-month U-6 rate change, role: supporting, formula_id: POINT_DIFF_K, window: 3, output_unit: percentage_points}
+      - {feature_id: US_U6_RATE__CHANGE_12M_PP, display_name: U-6 rate 12M change, description: Twelve-month U-6 rate change, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: percentage_points}
+
+  - indicator_id: US_PARTICIPATION_RATE
+    economic_category: labor
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_PARTICIPATION_RATE__CHANGE_3M_PP, display_name: Participation rate 3M change, description: Three-month labor-force participation-rate change, role: primary, formula_id: POINT_DIFF_K, window: 3, output_unit: percentage_points}
+      - {feature_id: US_PARTICIPATION_RATE__LEVEL, display_name: Participation rate level, description: Canonical participation-rate level, role: supporting, formula_id: LEVEL, window: 1, output_unit: percent}
+      - {feature_id: US_PARTICIPATION_RATE__CHANGE_1M_PP, display_name: Participation rate 1M change, description: One-month participation-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: percentage_points}
+      - {feature_id: US_PARTICIPATION_RATE__CHANGE_12M_PP, display_name: Participation rate 12M change, description: Twelve-month participation-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: percentage_points}
+
+  - indicator_id: US_EMPLOYMENT_POP_RATIO
+    economic_category: labor
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_EMPLOYMENT_POP_RATIO__CHANGE_3M_PP, display_name: Employment-population ratio 3M change, description: Three-month employment-population ratio change, role: primary, formula_id: POINT_DIFF_K, window: 3, output_unit: percentage_points}
+      - {feature_id: US_EMPLOYMENT_POP_RATIO__LEVEL, display_name: Employment-population ratio level, description: Canonical employment-population ratio, role: supporting, formula_id: LEVEL, window: 1, output_unit: percent}
+      - {feature_id: US_EMPLOYMENT_POP_RATIO__CHANGE_1M_PP, display_name: Employment-population ratio 1M change, description: One-month ratio change, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: percentage_points}
+      - {feature_id: US_EMPLOYMENT_POP_RATIO__CHANGE_12M_PP, display_name: Employment-population ratio 12M change, description: Twelve-month ratio change, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: percentage_points}
+
+  - indicator_id: US_INITIAL_CLAIMS
+    economic_category: labor
+    archetype: WEEKLY_CLAIMS
+    features:
+      - {feature_id: US_INITIAL_CLAIMS__MA_4W, display_name: Initial claims four-week average, description: Trailing four-week moving average of initial claims, role: primary, formula_id: MOVING_AVERAGE_K, window: 4, output_unit: number}
+      - {feature_id: US_INITIAL_CLAIMS__MA4_CHANGE_4W, display_name: Initial claims MA4 four-week change, description: Change in the four-week average from four weeks earlier, role: supporting, formula_id: MA4W_CHANGE_KW, window: 4, output_unit: number}
+      - {feature_id: US_INITIAL_CLAIMS__MA4_CHANGE_13W, display_name: Initial claims MA4 thirteen-week change, description: Change in the four-week average from thirteen weeks earlier, role: supporting, formula_id: MA4W_CHANGE_KW, window: 13, output_unit: number}
+      - {feature_id: US_INITIAL_CLAIMS__MA4_YOY_PCT, display_name: Initial claims MA4 YoY change, description: Percent change in the four-week average from 52 weeks earlier, role: supporting, formula_id: MA4W_YOY_PCT, window: 52, output_unit: percent}
+
+  - indicator_id: US_CONTINUING_CLAIMS
+    economic_category: labor
+    archetype: WEEKLY_CLAIMS
+    features:
+      - {feature_id: US_CONTINUING_CLAIMS__MA_4W, display_name: Continuing claims four-week average, description: Trailing four-week moving average of continuing claims, role: primary, formula_id: MOVING_AVERAGE_K, window: 4, output_unit: number}
+      - {feature_id: US_CONTINUING_CLAIMS__MA4_CHANGE_4W, display_name: Continuing claims MA4 four-week change, description: Change in the four-week average from four weeks earlier, role: supporting, formula_id: MA4W_CHANGE_KW, window: 4, output_unit: number}
+      - {feature_id: US_CONTINUING_CLAIMS__MA4_CHANGE_13W, display_name: Continuing claims MA4 thirteen-week change, description: Change in the four-week average from thirteen weeks earlier, role: supporting, formula_id: MA4W_CHANGE_KW, window: 13, output_unit: number}
+      - {feature_id: US_CONTINUING_CLAIMS__MA4_YOY_PCT, display_name: Continuing claims MA4 YoY change, description: Percent change in the four-week average from 52 weeks earlier, role: supporting, formula_id: MA4W_YOY_PCT, window: 52, output_unit: percent}
+
+  - indicator_id: US_JOB_OPENINGS
+    economic_category: labor
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_JOB_OPENINGS__MA_3M, display_name: Job openings three-month average, description: Trailing three-month average of job openings, role: primary, formula_id: MOVING_AVERAGE_K, window: 3, output_unit: thousands_persons}
+      - {feature_id: US_JOB_OPENINGS__LEVEL, display_name: Job openings level, description: Canonical job openings level, role: supporting, formula_id: LEVEL, window: 1, output_unit: thousands_persons}
+      - {feature_id: US_JOB_OPENINGS__CHANGE_3M, display_name: Job openings 3M change, description: Absolute change in job openings over three months, role: supporting, formula_id: DIFF_K, window: 3, output_unit: thousands_persons}
+      - {feature_id: US_JOB_OPENINGS__GROWTH_YOY, display_name: Job openings YoY growth, description: Percent growth in job openings from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_HIRES
+    economic_category: labor
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_HIRES__LEVEL, display_name: Hires rate level, description: Canonical JOLTS hires rate, role: primary, formula_id: LEVEL, window: 1, output_unit: rate}
+      - {feature_id: US_HIRES__CHANGE_1M_RATE_POINTS, display_name: Hires rate 1M change, description: One-month change in hires rate points, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: rate_points}
+      - {feature_id: US_HIRES__CHANGE_3M_RATE_POINTS, display_name: Hires rate 3M change, description: Three-month change in hires rate points, role: supporting, formula_id: POINT_DIFF_K, window: 3, output_unit: rate_points}
+      - {feature_id: US_HIRES__CHANGE_12M_RATE_POINTS, display_name: Hires rate 12M change, description: Twelve-month change in hires rate points, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: rate_points}
+
+  - indicator_id: US_QUITS
+    economic_category: labor
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_QUITS__LEVEL, display_name: Quits rate level, description: Canonical JOLTS quits rate, role: primary, formula_id: LEVEL, window: 1, output_unit: rate}
+      - {feature_id: US_QUITS__CHANGE_1M_RATE_POINTS, display_name: Quits rate 1M change, description: One-month change in quits rate points, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: rate_points}
+      - {feature_id: US_QUITS__CHANGE_3M_RATE_POINTS, display_name: Quits rate 3M change, description: Three-month change in quits rate points, role: supporting, formula_id: POINT_DIFF_K, window: 3, output_unit: rate_points}
+      - {feature_id: US_QUITS__CHANGE_12M_RATE_POINTS, display_name: Quits rate 12M change, description: Twelve-month change in quits rate points, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: rate_points}
+
+  - indicator_id: US_TEMP_HELP_EMPLOYMENT
+    economic_category: labor
+    archetype: EMPLOYMENT_LEVEL
+    features:
+      - {feature_id: US_TEMP_HELP_EMPLOYMENT__GROWTH_3M_ANNUALIZED, display_name: Temporary help employment 3M annualized growth, description: Three-month annualized temporary-help employment growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_TEMP_HELP_EMPLOYMENT__CHANGE_1M, display_name: Temporary help monthly change, description: One-month absolute employment change, role: supporting, formula_id: DIFF_K, window: 1, output_unit: thousands_persons}
+      - {feature_id: US_TEMP_HELP_EMPLOYMENT__GROWTH_6M_ANNUALIZED, display_name: Temporary help employment 6M annualized growth, description: Six-month annualized employment growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_TEMP_HELP_EMPLOYMENT__GROWTH_YOY, display_name: Temporary help employment YoY growth, description: Employment growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_MANUFACTURING_HOURS
+    economic_category: labor
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_MANUFACTURING_HOURS__LEVEL, display_name: Manufacturing weekly hours level, description: Canonical average weekly hours level, role: primary, formula_id: LEVEL, window: 1, output_unit: hours}
+      - {feature_id: US_MANUFACTURING_HOURS__CHANGE_1M, display_name: Manufacturing hours 1M change, description: One-month change in weekly hours, role: supporting, formula_id: DIFF_K, window: 1, output_unit: hours}
+      - {feature_id: US_MANUFACTURING_HOURS__CHANGE_3M, display_name: Manufacturing hours 3M change, description: Three-month change in weekly hours, role: supporting, formula_id: DIFF_K, window: 3, output_unit: hours}
+
+  - indicator_id: US_AVERAGE_HOURLY_EARNINGS
+    economic_category: labor
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_AVERAGE_HOURLY_EARNINGS__GROWTH_3M_ANNUALIZED, display_name: Average hourly earnings 3M annualized growth, description: Three-month annualized hourly earnings growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_AVERAGE_HOURLY_EARNINGS__GROWTH_1M_ANNUALIZED, display_name: Average hourly earnings 1M annualized growth, description: One-month annualized hourly earnings growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_AVERAGE_HOURLY_EARNINGS__GROWTH_6M_ANNUALIZED, display_name: Average hourly earnings 6M annualized growth, description: Six-month annualized hourly earnings growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_AVERAGE_HOURLY_EARNINGS__GROWTH_YOY, display_name: Average hourly earnings YoY growth, description: Hourly earnings growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_SAVING_RATE
+    economic_category: household_finance
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_SAVING_RATE__LEVEL, display_name: Personal saving rate level, description: Canonical personal saving rate, role: primary, formula_id: LEVEL, window: 1, output_unit: percent}
+      - {feature_id: US_SAVING_RATE__CHANGE_1M_PP, display_name: Saving rate 1M change, description: One-month saving-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: percentage_points}
+      - {feature_id: US_SAVING_RATE__CHANGE_3M_PP, display_name: Saving rate 3M change, description: Three-month saving-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 3, output_unit: percentage_points}
+      - {feature_id: US_SAVING_RATE__CHANGE_12M_PP, display_name: Saving rate 12M change, description: Twelve-month saving-rate change, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: percentage_points}
+
+  - indicator_id: US_CONSUMER_CREDIT
+    economic_category: credit
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_CONSUMER_CREDIT__GROWTH_3M_ANNUALIZED, display_name: Consumer credit 3M annualized growth, description: Three-month annualized consumer credit growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_CONSUMER_CREDIT__GROWTH_1M_ANNUALIZED, display_name: Consumer credit 1M annualized growth, description: One-month annualized consumer credit growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_CONSUMER_CREDIT__GROWTH_6M_ANNUALIZED, display_name: Consumer credit 6M annualized growth, description: Six-month annualized consumer credit growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_CONSUMER_CREDIT__GROWTH_YOY, display_name: Consumer credit YoY growth, description: Consumer credit growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_REVOLVING_CREDIT
+    economic_category: credit
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_REVOLVING_CREDIT__GROWTH_3M_ANNUALIZED, display_name: Revolving credit 3M annualized growth, description: Three-month annualized revolving credit growth, role: primary, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_REVOLVING_CREDIT__GROWTH_1M_ANNUALIZED, display_name: Revolving credit 1M annualized growth, description: One-month annualized revolving credit growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 1, output_unit: percent_annualized}
+      - {feature_id: US_REVOLVING_CREDIT__GROWTH_6M_ANNUALIZED, display_name: Revolving credit 6M annualized growth, description: Six-month annualized revolving credit growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_REVOLVING_CREDIT__GROWTH_YOY, display_name: Revolving credit YoY growth, description: Revolving credit growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_DURABLE_GOODS_ORDERS
+    economic_category: orders
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_DURABLE_GOODS_ORDERS__MA3_BLOCK_GROWTH_ANNUALIZED, display_name: Durable goods orders MA3 block growth, description: Annualized growth between adjacent non-overlapping three-month average blocks, role: primary, formula_id: MA3_BLOCK_GROWTH_ANNUALIZED, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_DURABLE_GOODS_ORDERS__MA_3M, display_name: Durable goods orders 3M average, description: Trailing three-month average of durable goods orders, role: supporting, formula_id: MOVING_AVERAGE_K, window: 3, output_unit: millions_dollars}
+      - {feature_id: US_DURABLE_GOODS_ORDERS__GROWTH_YOY, display_name: Durable goods orders YoY growth, description: Orders growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_CORE_CAPITAL_GOODS_ORDERS
+    economic_category: orders
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_CORE_CAPITAL_GOODS_ORDERS__MA3_BLOCK_GROWTH_ANNUALIZED, display_name: Core capital goods orders MA3 block growth, description: Annualized growth between adjacent non-overlapping three-month average blocks, role: primary, formula_id: MA3_BLOCK_GROWTH_ANNUALIZED, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_CORE_CAPITAL_GOODS_ORDERS__MA_3M, display_name: Core capital goods orders 3M average, description: Trailing three-month average of core capital goods orders, role: supporting, formula_id: MOVING_AVERAGE_K, window: 3, output_unit: millions_dollars}
+      - {feature_id: US_CORE_CAPITAL_GOODS_ORDERS__GROWTH_YOY, display_name: Core capital goods orders YoY growth, description: Orders growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_MANUFACTURING_CAPACITY
+    economic_category: production
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_MANUFACTURING_CAPACITY__LEVEL, display_name: Manufacturing capacity utilization, description: Manufacturing SIC capacity utilization level, role: primary, formula_id: LEVEL, window: 1, output_unit: percent}
+      - {feature_id: US_MANUFACTURING_CAPACITY__CHANGE_1M_PP, display_name: Capacity utilization 1M change, description: One-month capacity-utilization change, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: percentage_points}
+      - {feature_id: US_MANUFACTURING_CAPACITY__CHANGE_3M_PP, display_name: Capacity utilization 3M change, description: Three-month capacity-utilization change, role: supporting, formula_id: POINT_DIFF_K, window: 3, output_unit: percentage_points}
+      - {feature_id: US_MANUFACTURING_CAPACITY__CHANGE_12M_PP, display_name: Capacity utilization 12M change, description: Twelve-month capacity-utilization change, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: percentage_points}
+
+  - indicator_id: US_HOUSING_STARTS
+    economic_category: housing
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_HOUSING_STARTS__MA3_BLOCK_GROWTH_ANNUALIZED, display_name: Housing starts MA3 block growth, description: Annualized growth between adjacent non-overlapping three-month average blocks, role: primary, formula_id: MA3_BLOCK_GROWTH_ANNUALIZED, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_HOUSING_STARTS__MA_3M, display_name: Housing starts 3M average, description: Trailing three-month average of housing starts, role: supporting, formula_id: MOVING_AVERAGE_K, window: 3, output_unit: thousands_units}
+      - {feature_id: US_HOUSING_STARTS__GROWTH_YOY, display_name: Housing starts YoY growth, description: Housing starts growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_BUILDING_PERMITS
+    economic_category: housing
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_BUILDING_PERMITS__MA3_BLOCK_GROWTH_ANNUALIZED, display_name: Building permits MA3 block growth, description: Annualized growth between adjacent non-overlapping three-month average blocks, role: primary, formula_id: MA3_BLOCK_GROWTH_ANNUALIZED, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_BUILDING_PERMITS__MA_3M, display_name: Building permits 3M average, description: Trailing three-month average of building permits, role: supporting, formula_id: MOVING_AVERAGE_K, window: 3, output_unit: thousands_units}
+      - {feature_id: US_BUILDING_PERMITS__GROWTH_YOY, display_name: Building permits YoY growth, description: Building permits growth from one year earlier, role: supporting, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+
+  - indicator_id: US_BUSINESS_INVENTORIES
+    economic_category: inventories
+    archetype: STOCK_OR_LEVEL_GROWTH
+    features:
+      - {feature_id: US_BUSINESS_INVENTORIES__GROWTH_YOY, display_name: Business inventories YoY growth, description: Business inventories growth from one year earlier, role: primary, formula_id: MONTHLY_YOY, window: 12, output_unit: percent}
+      - {feature_id: US_BUSINESS_INVENTORIES__GROWTH_3M_ANNUALIZED, display_name: Business inventories 3M annualized growth, description: Three-month annualized inventories growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 3, output_unit: percent_annualized}
+      - {feature_id: US_BUSINESS_INVENTORIES__GROWTH_6M_ANNUALIZED, display_name: Business inventories 6M annualized growth, description: Six-month annualized inventories growth, role: supporting, formula_id: MONTHLY_ANNUALIZED_K, window: 6, output_unit: percent_annualized}
+      - {feature_id: US_BUSINESS_INVENTORIES__LEVEL, display_name: Business inventories level, description: Canonical business inventories level, role: supporting, formula_id: LEVEL, window: 1, output_unit: millions_dollars}
+
+  - indicator_id: US_INVENTORY_SALES_RATIO
+    economic_category: inventories
+    archetype: RATE_OR_RATIO
+    features:
+      - {feature_id: US_INVENTORY_SALES_RATIO__LEVEL, display_name: Inventory-sales ratio level, description: Canonical total business inventory-sales ratio, role: primary, formula_id: LEVEL, window: 1, output_unit: ratio}
+      - {feature_id: US_INVENTORY_SALES_RATIO__CHANGE_1M_RATIO_POINTS, display_name: Inventory-sales ratio 1M change, description: One-month ratio-point change, role: supporting, formula_id: POINT_DIFF_K, window: 1, output_unit: ratio_points}
+      - {feature_id: US_INVENTORY_SALES_RATIO__CHANGE_3M_RATIO_POINTS, display_name: Inventory-sales ratio 3M change, description: Three-month ratio-point change, role: supporting, formula_id: POINT_DIFF_K, window: 3, output_unit: ratio_points}
+      - {feature_id: US_INVENTORY_SALES_RATIO__CHANGE_12M_RATIO_POINTS, display_name: Inventory-sales ratio 12M change, description: Twelve-month ratio-point change, role: supporting, formula_id: POINT_DIFF_K, window: 12, output_unit: ratio_points}
