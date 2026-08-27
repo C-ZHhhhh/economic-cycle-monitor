@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.data_quality.scope import RuntimeDomain
+
 
 class SourceSystem(StrEnum):
     """Stable logical source identifiers used by resolution policy."""
@@ -351,6 +353,7 @@ class HealthSnapshot(BaseModel):
 
     indicator_id: str | None = None
     source: str
+    runtime_domain: RuntimeDomain | None = None
     mapping_quality: MappingQuality
     runtime_health: RuntimeHealth
     expected_latest_period: date | None = None
@@ -370,7 +373,12 @@ class ReadinessStatus(BaseModel):
     registry_policy_version: str
     registry_hash: str
     current_data_ready: bool
+    pit_contract_ready: bool
+    pit_runtime_ready: bool
+    pit_runtime_health: RuntimeHealth
     pit_backtest_ready: bool
     current_blockers: list[str] = Field(default_factory=list)
     pit_blockers: list[str] = Field(default_factory=list)
+    pit_contract_blockers: list[str] = Field(default_factory=list)
+    pit_runtime_blockers: list[str] = Field(default_factory=list)
     degraded_nonblocking: list[str] = Field(default_factory=list)

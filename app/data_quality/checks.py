@@ -8,6 +8,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.data_quality.scope import (
+    PITAvailabilityStatus,
+    QualityScope,
+    RuntimeDomain,
+    SafeErrorCategory,
+    pit_event_details,
+)
 from app.data_sources.fred.metadata import MetadataValidationResult
 from app.data_sources.fred.schemas import FredObservation
 from app.data_sources.official.schemas import OfficialObservation
@@ -28,6 +35,7 @@ QUALITY_RULES = (
     "non_monotonic_dates",
     "empty_api_response",
     "source_unavailable",
+    "pit_availability_failure",
     "raw_response_hash_conflict",
     "duplicate_vintage",
     "source_mapping_missing",
@@ -250,6 +258,41 @@ def source_unavailable_issue(indicator_id: str, error: Exception) -> QualityIssu
         event_type="source_unavailable",
         severity="error",
         message=f"FRED request failed: {type(error).__name__}",
+        details={
+            "quality_scope": QualityScope.CURRENT_RUNTIME.value,
+            "runtime_domain": RuntimeDomain.FRED_CURRENT.value,
+        },
+    )
+
+
+def pit_availability_issue(
+    indicator_id: str,
+    *,
+    as_of: date,
+    status: PITAvailabilityStatus,
+    safe_error_category: SafeErrorCategory,
+    http_status: int | None,
+    runtime_blocking: bool,
+) -> QualityIssue:
+    """Create one typed, credential-free historical PIT availability event."""
+    expected_unavailability = status in {
+        PITAvailabilityStatus.OUTSIDE_COVERAGE,
+        PITAvailabilityStatus.NO_VINTAGE,
+        PITAvailabilityStatus.EMPTY_INFORMATION_SET,
+        PITAvailabilityStatus.UNSAFE,
+    }
+    return QualityIssue(
+        indicator_id=indicator_id,
+        event_type="pit_availability_failure",
+        severity="warning" if expected_unavailability else "error",
+        message=f"Historical PIT request failed: {status.value}",
+        details=pit_event_details(
+            as_of=as_of,
+            status=status,
+            safe_error_category=safe_error_category,
+            http_status=http_status,
+            runtime_blocking=runtime_blocking,
+        ),
     )
 
 

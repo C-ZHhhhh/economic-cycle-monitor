@@ -8,6 +8,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.data_quality.checks import QualityIssue
+from app.data_quality.scope import QualityScope, quality_event_scope
 from app.database.models import DataQualityEvent
 
 
@@ -79,6 +80,7 @@ def list_quality_events(
     severity: str | None = None,
     event_type: str | None = None,
     unresolved_only: bool = False,
+    quality_scope: QualityScope | None = None,
     offset: int = 0,
     limit: int = 100,
 ) -> Sequence[DataQualityEvent]:
@@ -92,5 +94,12 @@ def list_quality_events(
         statement = statement.where(DataQualityEvent.event_type == event_type)
     if unresolved_only:
         statement = statement.where(DataQualityEvent.resolved_at.is_(None))
-    statement = statement.order_by(DataQualityEvent.detected_at.desc()).offset(offset).limit(limit)
-    return session.scalars(statement).all()
+    statement = statement.order_by(DataQualityEvent.detected_at.desc())
+    if quality_scope is None:
+        return session.scalars(statement.offset(offset).limit(limit)).all()
+    scoped = [
+        event
+        for event in session.scalars(statement).all()
+        if quality_event_scope(session, event) is quality_scope
+    ]
+    return scoped[offset : offset + limit]

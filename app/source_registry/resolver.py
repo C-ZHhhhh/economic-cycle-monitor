@@ -7,6 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.data_quality.scope import PITAvailabilityStatus
 from app.database.models import (
     DataQualityEvent,
     IndicatorRegistry,
@@ -37,6 +38,11 @@ class PITGranularityUnsupported(SourceResolutionError):
 
 class PITCoverageUnverified(SourceResolutionError):
     """The indicator policy does not approve safe date-EOD ALFRED resolution."""
+
+    def __init__(self, indicator_id: str, capability: str) -> None:
+        super().__init__(f"PIT_UNSAFE:PIT_COVERAGE_UNVERIFIED:{indicator_id}:{capability}")
+        self.indicator_id = indicator_id
+        self.availability_status = PITAvailabilityStatus.UNSAFE
 
 
 class PITSnapshotNotCached(SourceResolutionError):
@@ -114,9 +120,7 @@ def _resolve_pit(
         or policy.vintage.backtest_safety != "PIT_SAFE_DATE_EOD"
         or policy.vintage.information_set_semantics != "END_OF_DAY"
     ):
-        raise PITCoverageUnverified(
-            f"PIT_COVERAGE_UNVERIFIED:{policy.indicator_id}:{policy.vintage.capability}"
-        )
+        raise PITCoverageUnverified(policy.indicator_id, policy.vintage.capability)
     snapshot_exists = session.scalar(
         select(ObservationVintage.id)
         .where(

@@ -17,6 +17,7 @@ from app.data_quality.checks import (
     raw_hash_conflict_issue,
 )
 from app.data_quality.repository import persist_quality_issues, reconcile_quality_issues
+from app.data_quality.scope import QualityScope, quality_event_scope
 from app.database.models import (
     DataQualityEvent,
     DataSourceRequest,
@@ -184,14 +185,22 @@ def run_database_quality_checks(
     return summary
 
 
-def quality_summary_for_indicator(session: Session, indicator_id: str) -> dict[str, Any]:
+def quality_summary_for_indicator(
+    session: Session,
+    indicator_id: str,
+    *,
+    quality_scope: QualityScope = QualityScope.CURRENT_RUNTIME,
+) -> dict[str, Any]:
     """Return compact unresolved counts by severity for an indicator detail response."""
-    rows = session.execute(
-        select(DataQualityEvent.severity, func.count(DataQualityEvent.id))
-        .where(
+    events = session.scalars(
+        select(DataQualityEvent).where(
             DataQualityEvent.indicator_id == indicator_id,
             DataQualityEvent.resolved_at.is_(None),
         )
-        .group_by(DataQualityEvent.severity)
     ).all()
-    return {severity: count for severity, count in rows}
+    counts: dict[str, int] = {}
+    for event in events:
+        if quality_event_scope(session, event) is not quality_scope:
+            continue
+        counts[event.severity] = counts.get(event.severity, 0) + 1
+    return counts

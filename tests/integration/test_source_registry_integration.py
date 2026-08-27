@@ -8,6 +8,18 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.schemas import PipelineSelection
+from app.data_quality.checks import pit_availability_issue, source_unavailable_issue
+from app.data_quality.repository import persist_quality_issues
+from app.data_quality.scope import (
+    AUDIT_PIT_STATUS,
+    AUDIT_QUALITY_SCOPE,
+    AUDIT_RUNTIME_BLOCKING,
+    AUDIT_RUNTIME_DOMAIN,
+    PITAvailabilityStatus,
+    QualityScope,
+    RuntimeDomain,
+    SafeErrorCategory,
+)
 from app.data_quality.service import run_database_quality_checks
 from app.database.models import (
     DataQualityEvent,
@@ -54,6 +66,29 @@ def _request(session: Session, source: str, when: datetime, *, success: bool = T
             endpoint="offline-fixture",
             series_id=None,
             request_parameters_json={},
+            started_at=when,
+            finished_at=when,
+            success=success,
+            attempt_count=1,
+            from_cache=False,
+        )
+    )
+
+
+def _alfred_request(session: Session, when: datetime, *, success: bool = True) -> None:
+    session.add(
+        DataSourceRequest(
+            source="fred",
+            endpoint="series/observations",
+            series_id="GDPC1",
+            request_parameters_json={
+                "realtime_start": "2020-07-19",
+                "realtime_end": "2020-07-19",
+                AUDIT_QUALITY_SCOPE: QualityScope.PIT_AVAILABILITY.value,
+                AUDIT_RUNTIME_DOMAIN: RuntimeDomain.ALFRED_VINTAGE.value,
+                AUDIT_PIT_STATUS: PITAvailabilityStatus.AVAILABLE.value,
+                AUDIT_RUNTIME_BLOCKING: not success,
+            },
             started_at=when,
             finished_at=when,
             success=success,
@@ -473,6 +508,7 @@ def test_current_and_pit_readiness_pass_after_all_live_gates(
     today = date(2024, 6, 15)
     for source in {storage_source_name(item.primary_source.value) for item in registry.policies}:
         _request(postgres_session, source, datetime(2024, 6, 15, tzinfo=UTC))
+    _alfred_request(postgres_session, datetime(2024, 6, 15, tzinfo=UTC))
     for policy in registry.policies:
         _observation(
             postgres_session,
@@ -484,8 +520,104 @@ def test_current_and_pit_readiness_pass_after_all_live_gates(
     readiness = validate_data_layer(postgres_session, registry=registry, today=today)
     assert readiness.current_data_ready
     assert readiness.current_blockers == []
+    assert readiness.pit_contract_ready
+    assert readiness.pit_runtime_ready
     assert readiness.pit_backtest_ready
     assert readiness.pit_blockers == []
+
+    persist_quality_issues(
+        postgres_session,
+        [
+            pit_availability_issue(
+                "US_REAL_GDP",
+                as_of=date(1940, 1, 1),
+                status=PITAvailabilityStatus.OUTSIDE_COVERAGE,
+                safe_error_category=SafeErrorCategory.COVERAGE,
+                http_status=400,
+                runtime_blocking=False,
+            )
+        ],
+        run_id=None,
+    )
+    isolated = validate_data_layer(postgres_session, registry=registry, today=today)
+    assert isolated.current_data_ready
+    assert isolated.pit_backtest_ready
+    assert isolated.current_blockers == []
+
+    _alfred_request(
+        postgres_session,
+        datetime(2024, 6, 15, 1, tzinfo=UTC),
+        success=False,
+    )
+    failed_runtime = validate_data_layer(postgres_session, registry=registry, today=today)
+    assert failed_runtime.current_data_ready
+    assert failed_runtime.pit_contract_ready
+    assert not failed_runtime.pit_runtime_ready
+    assert not failed_runtime.pit_backtest_ready
+    assert failed_runtime.current_blockers == []
+
+    _alfred_request(
+        postgres_session,
+        datetime(2024, 6, 15, 2, tzinfo=UTC),
+    )
+    recovered = validate_data_layer(postgres_session, registry=registry, today=today)
+    assert recovered.current_data_ready
+    assert recovered.pit_contract_ready
+    assert recovered.pit_runtime_ready
+    assert recovered.pit_backtest_ready
+
+    persist_quality_issues(
+        postgres_session,
+        [source_unavailable_issue("US_REAL_GDP", RuntimeError("current failure"))],
+        run_id=None,
+    )
+    current_failed = validate_data_layer(postgres_session, registry=registry, today=today)
+    assert not current_failed.current_data_ready
+    assert current_failed.pit_backtest_ready
+    assert any(
+        "CURRENT_ERROR:source_unavailable" in item for item in current_failed.current_blockers
+    )
+
+
+def test_pit_contract_readiness_is_independent_from_healthy_alfred_runtime(
+    postgres_session: Session,
+) -> None:
+    registry = _seed_all(postgres_session)
+    today = date(2024, 6, 15)
+    for source in {storage_source_name(item.primary_source.value) for item in registry.policies}:
+        _request(postgres_session, source, datetime(2024, 6, 15, tzinfo=UTC))
+    _alfred_request(postgres_session, datetime(2024, 6, 15, tzinfo=UTC))
+    for policy in registry.policies:
+        _observation(
+            postgres_session,
+            policy.indicator_id,
+            storage_source_name(policy.primary_source.value),
+            expected_latest_period(policy, today=today),
+        )
+    target = registry.policies[0]
+    unsafe = target.model_copy(
+        update={"vintage": target.vintage.model_copy(update={"backtest_safety": "UNVERIFIED"})}
+    )
+    contract_blocked = registry.model_copy(
+        update={
+            "policies": [
+                unsafe if item.indicator_id == target.indicator_id else item
+                for item in registry.policies
+            ]
+        }
+    )
+    postgres_session.flush()
+
+    readiness = validate_data_layer(
+        postgres_session,
+        registry=contract_blocked,
+        today=today,
+    )
+    assert readiness.current_data_ready
+    assert not readiness.pit_contract_ready
+    assert readiness.pit_runtime_ready
+    assert not readiness.pit_backtest_ready
+    assert readiness.pit_contract_blockers == [f"PIT_COVERAGE_UNVERIFIED:{target.indicator_id}"]
 
 
 def test_quality_check_does_not_mix_source_separated_vintage_grain(

@@ -151,3 +151,30 @@ observation dates after that date, and is isolated from current observations and
 as-of dates. Empty, malformed, unavailable, unsafe-capability, or failed ALFRED results
 fail closed; current FRED or official-source snapshots are never substituted. Timestamp
 inputs remain unsupported and are never truncated.
+
+## DLCR-002 amendment: current and PIT health separation
+
+DLCR-002 adds operational classification without changing the frozen registry, canonical
+data contract, provider identities, or database schema. `CURRENT_RUNTIME` and
+`PIT_AVAILABILITY` are orthogonal quality scopes. Audit retention, resolution, and
+supersession remain lifecycle properties rather than a third scope.
+
+FRED continues to be stored as provider `fred`, while request evidence is evaluated in
+separate `FRED_CURRENT` and `ALFRED_VINTAGE` runtime domains. A PIT request cannot degrade
+current FRED health, activate current fallback, change the primary source, create current
+freshness findings, or block `CURRENT_DATA_READY` without independent current-domain
+evidence.
+
+PIT readiness now separates the frozen contract, ALFRED runtime health, and the availability
+of one `indicator_id + as_of` information set. Expected date-level outcomes such as
+`OUTSIDE_COVERAGE`, `NO_VINTAGE`, and a legitimate `EMPTY_INFORMATION_SET` fail that
+request closed but do not represent an ALFRED outage. Transport, authentication, rate-limit,
+server, malformed-response, unsafe, and unknown failures remain typed and fail closed.
+Ambiguous HTTP 400 responses are never treated as coverage evidence by themselves.
+
+New PIT audit payloads and request evidence carry typed scope, runtime domain, availability
+status, safe error category, optional HTTP status, blocking semantics, and classification
+version. Their fingerprint includes scope, domain, indicator, as-of date, status, and safe
+category. Existing audit rows remain immutable. Legacy rows are classified as PIT only from
+reliable run operation, run parameters, or exact realtime request evidence; ambiguous legacy
+records remain conservatively visible to current-health review.

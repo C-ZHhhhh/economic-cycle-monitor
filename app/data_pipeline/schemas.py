@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.data_quality.scope import PITAvailabilityStatus, QualityScope, RuntimeDomain
+
 
 class ObservationWriteResult(BaseModel):
     """Counts from idempotently persisting one observation response."""
@@ -22,6 +24,9 @@ class PipelineError(BaseModel):
     indicator_id: str
     error_type: str
     message: str
+    quality_scope: QualityScope | None = None
+    runtime_domain: RuntimeDomain | None = None
+    pit_availability_status: PITAvailabilityStatus | None = None
 
 
 class SyncSummary(BaseModel):
