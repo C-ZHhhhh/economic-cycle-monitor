@@ -1,0 +1,39 @@
+schema_version: "1"
+composite_spec_version: stage3d-v1
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+required_feature_spec_version: stage3a-v1
+required_normalization_spec_version: stage3b-v1
+required_normalization_spec_hash: 89ec106423a29a8fc477fbc4797f9b8e85dc3863b50e031852b302a49b58b173
+required_pillar_spec_version: stage3c-v1
+required_pillar_spec_hash: fed386805496d63cc7dd1ed0b6f772a8f821042fc9b04d93884d6c008f6b3d41
+
+architecture: THREE_LAYER_STATE
+state_id: US_MACRO__STATE_VECTOR
+
+growth:
+  component_id: US_MACRO__GROWTH_STRENGTH
+  unit: bounded_symmetric_score
+  semantic_direction: higher means stronger growth-side conditions
+  aggregation_method: EQUAL_WEIGHT_MEAN
+  minimum_growth_pillars: 3
+  confidence_method: EXPECTED_BASE_WEIGHTED_PILLAR_CONFIDENCE
+  breadth_method: SIGNED_BREADTH
+  dispersion_method: POPULATION_STD
+  pillars:
+    - pillar_id: US_MACRO__REAL_ACTIVITY_AND_DEMAND
+      base_weight: "0.25"
+    - pillar_id: US_MACRO__LABOR_STRENGTH
+      base_weight: "0.25"
+    - pillar_id: US_MACRO__MANUFACTURING_AND_INVESTMENT
+      base_weight: "0.25"
+    - pillar_id: US_MACRO__HOUSING_STRENGTH
+      base_weight: "0.25"
+
+inflation_pillar_id: US_MACRO__INFLATION_PRESSURE
+
+context_pillar_ids:
+  - US_MACRO__HOUSEHOLD_FINANCIAL_CUSHION
+  - US_MACRO__CREDIT_USAGE_PRESSURE
+  - US_MACRO__INVENTORY_ACCUMULATION_PRESSURE
+  - US_MACRO__INVENTORY_ABSORPTION_STRENGTH
