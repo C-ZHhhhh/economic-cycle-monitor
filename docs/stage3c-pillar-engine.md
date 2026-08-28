@@ -43,6 +43,15 @@ information set and to be PIT-safe. Mixing current and historical results makes
 the pillar `PIT_UNSAFE` with a null value. Calculation results retain constituent
 dates, values, hashes, specification hashes, and the evaluation information set.
 
+The final historical gates and the 33-primary coverage inventory are recorded in
+[`stage3c-historical-pit-coverage-audit.md`](stage3c-historical-pit-coverage-audit.md).
+The 2020 and 2022 full-universe controls passed. The 2008 control correctly
+failed closed for upstream `OUTSIDE_COVERAGE` series and applied the configured
+coverage statuses without current-data substitution, older-result fallback, or
+future leakage. This is a known historical coverage limitation, not an engine
+implementation blocker. The exact earliest full-universe PIT date remains
+`NOT_YET_MATERIALIZED` and is deferred to Stage 3F coverage design.
+
 ## Persistence and API scope
 
 Pillars are compute-on-demand with a bounded process-local LRU. Stage 3C adds no

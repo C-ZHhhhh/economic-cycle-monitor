@@ -1,0 +1,93 @@
+# Stage 3C Historical PIT Coverage Audit
+
+This audit records the historical point-in-time coverage evidence available when
+Stage 3C was closed. It uses only the frozen Stage 2 ALFRED vintage metadata and
+the already completed Stage 3C gates. It did not trigger a historical backfill or
+make new provider requests.
+
+`Earliest validated` and `latest validated` are evidence boundaries, not claims
+about continuous availability between or outside the validated dates. `AVAILABLE`
+means that the primary signal was successfully formed under the date-EOD PIT
+contract at that control date. `OUTSIDE_COVERAGE` is an upstream, fail-closed
+historical availability result.
+
+| Indicator | Primary signal | Earliest validated | Latest validated | 2008-12-31 | 2020-05-31 | 2022-07-31 |
+| --- | --- | --- | --- | --- | --- | --- |
+| US_AVERAGE_HOURLY_EARNINGS | `US_AVERAGE_HOURLY_EARNINGS__GROWTH_3M_ANNUALIZED__WAGE_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_BUILDING_PERMITS | `US_BUILDING_PERMITS__MA3_BLOCK_GROWTH_ANNUALIZED__HOUSING_STRENGTH__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_BUSINESS_INVENTORIES | `US_BUSINESS_INVENTORIES__GROWTH_YOY__INVENTORY_ACCUMULATION_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_CONSUMER_CREDIT | `US_CONSUMER_CREDIT__GROWTH_3M_ANNUALIZED__CREDIT_USAGE_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_CONTINUING_CLAIMS | `US_CONTINUING_CLAIMS__MA_4W__LABOR_STRENGTH__SIGNAL` | 2017-03-09 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_CORE_CAPITAL_GOODS_ORDERS | `US_CORE_CAPITAL_GOODS_ORDERS__MA3_BLOCK_GROWTH_ANNUALIZED__BUSINESS_INVESTMENT_STRENGTH__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_CORE_CPI | `US_CORE_CPI__INFLATION_3M_ANNUALIZED__INFLATION_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_CORE_PCE_PRICE | `US_CORE_PCE_PRICE__INFLATION_3M_ANNUALIZED__INFLATION_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_CPI | `US_CPI__INFLATION_3M_ANNUALIZED__INFLATION_PRESSURE__SIGNAL` | 1999-05-14 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_DURABLE_GOODS_ORDERS | `US_DURABLE_GOODS_ORDERS__MA3_BLOCK_GROWTH_ANNUALIZED__BUSINESS_INVESTMENT_STRENGTH__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_EMPLOYMENT_POP_RATIO | `US_EMPLOYMENT_POP_RATIO__CHANGE_3M_PP__LABOR_STRENGTH__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_HIRES | `US_HIRES__LEVEL__LABOR_TIGHTNESS__SIGNAL` | 2017-08-08 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_HOUSING_STARTS | `US_HOUSING_STARTS__MA3_BLOCK_GROWTH_ANNUALIZED__HOUSING_STRENGTH__SIGNAL` | 1992-07-16 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_INDUSTRIAL_PRODUCTION | `US_INDUSTRIAL_PRODUCTION__GROWTH_3M_ANNUALIZED__MANUFACTURING_STRENGTH__SIGNAL` | 1976-12-15 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_INITIAL_CLAIMS | `US_INITIAL_CLAIMS__MA_4W__LABOR_STRENGTH__SIGNAL` | 2017-01-12 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_INVENTORY_SALES_RATIO | `US_INVENTORY_SALES_RATIO__LEVEL__INVENTORY_ABSORPTION_STRENGTH__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_JOB_OPENINGS | `US_JOB_OPENINGS__MA_3M__LABOR_TIGHTNESS__SIGNAL` | 2017-08-08 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_MANUFACTURING_CAPACITY | `US_MANUFACTURING_CAPACITY__LEVEL__MANUFACTURING_STRENGTH__SIGNAL` | 2019-07-16 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_MANUFACTURING_HOURS | `US_MANUFACTURING_HOURS__LEVEL__MANUFACTURING_STRENGTH__SIGNAL` | 1993-04-02 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_NONFARM_EMPLOYMENT | `US_NONFARM_EMPLOYMENT__CHANGE_1M__LABOR_STRENGTH__SIGNAL` | 1990-02-02 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_PARTICIPATION_RATE | `US_PARTICIPATION_RATE__CHANGE_3M_PP__LABOR_PARTICIPATION__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_PCE_PRICE | `US_PCE_PRICE__INFLATION_3M_ANNUALIZED__INFLATION_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_PPI_COMMODITIES | `US_PPI_COMMODITIES__INFLATION_YOY__INFLATION_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_QUITS | `US_QUITS__LEVEL__LABOR_TIGHTNESS__SIGNAL` | 2017-08-08 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_REAL_DISPOSABLE_INCOME | `US_REAL_DISPOSABLE_INCOME__GROWTH_3M_ANNUALIZED__HOUSEHOLD_INCOME_STRENGTH__SIGNAL` | 2002-04-29 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_REAL_GDP | `US_REAL_GDP__GROWTH_QOQ_ANNUALIZED__REAL_ACTIVITY_STRENGTH__SIGNAL` | 2008-02-28 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_REAL_PCE | `US_REAL_PCE__GROWTH_3M_ANNUALIZED__CONSUMER_ACTIVITY_STRENGTH__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_REAL_RETAIL_SALES | `US_REAL_RETAIL_SALES__GROWTH_3M_ANNUALIZED__CONSUMER_ACTIVITY_STRENGTH__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_REVOLVING_CREDIT | `US_REVOLVING_CREDIT__GROWTH_3M_ANNUALIZED__CREDIT_USAGE_PRESSURE__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_SAVING_RATE | `US_SAVING_RATE__LEVEL__HOUSEHOLD_FINANCIAL_CUSHION__SIGNAL` | 2008-12-31 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+| US_TEMP_HELP_EMPLOYMENT | `US_TEMP_HELP_EMPLOYMENT__GROWTH_3M_ANNUALIZED__LABOR_STRENGTH__SIGNAL` | 2017-11-03 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_U6_RATE | `US_U6_RATE__LEVEL__LABOR_STRENGTH__SIGNAL` | 2017-12-08 | 2022-07-31 | OUTSIDE_COVERAGE | AVAILABLE | AVAILABLE |
+| US_UNEMPLOYMENT_RATE | `US_UNEMPLOYMENT_RATE__LEVEL__LABOR_STRENGTH__SIGNAL` | 1992-06-05 | 2022-07-31 | AVAILABLE | AVAILABLE | AVAILABLE |
+
+## Common-universe result
+
+- 2008-12-31: 25/33 primary signals available; 8/33 returned
+  `OUTSIDE_COVERAGE`.
+- 2020-05-31: 33/33 primary signals available; 9/9 pillars `OK`.
+- 2022-07-31: 33/33 primary signals available; 9/9 pillars `OK`.
+- `earliest_common_full_primary_pit_date`: `NOT_YET_MATERIALIZED`.
+
+The current metadata contains sparse validated control dates, not a complete
+per-series coverage interval inventory. Although 2020-05-31 is a confirmed full
+universe, the evidence does not prove it is the earliest one. Determining the
+exact earliest common date is deferred to the Stage 3F coverage design; no date
+is inferred and no mass ALFRED request was made.
+
+## 2008 known historical coverage limitation
+
+At 2008-12-31, Real Activity was `-0.4513`, Housing was `-0.9089`, and
+Manufacturing was `-0.8687` with 4/5 coverage and `PARTIAL` status. Labor had
+4/11 coverage, `INSUFFICIENT_COVERAGE` status, and a null value. Seven Labor
+primaries (U-6, initial claims, continuing claims, job openings, hires, quits,
+and temporary-help employment) plus Manufacturing Capacity returned genuine
+`OUTSIDE_COVERAGE` results.
+
+The engine did not use a current snapshot, revised-history substitution, an
+older successful row, or any future observation. Future leakage was zero. This
+is a **KNOWN HISTORICAL COVERAGE LIMITATION**, not an implementation blocker or
+known engine bug. It demonstrates that the historical coverage semantics pass:
+available data is computed under the correct PIT information set, while
+unavailable data fails closed and degrades coverage according to policy.
+
+## Positive and revision controls
+
+The 2020-05-31 full gate produced 9/9 `OK` pillars, including Real Activity
+`-0.4967` and Labor `-0.86035`. The largest absolute raw directed z-score was
+`151.4766`, while its tanh contribution remained strictly inside `(-1, 1)`.
+Future leakage was zero.
+
+The 2022-07-31 full gate produced 9/9 `OK` pillars and Inflation Pressure
+`+0.79940`, with zero future leakage.
+
+The GDP 2020-Q1 revision control compared the 2020-04-29 and 2020-05-28
+information sets. The raw observation, feature, normalized signal, tanh
+contribution, Real Activity pillar value, and calculation hash changed. Only the
+GDP constituent received the revision-change marker.
