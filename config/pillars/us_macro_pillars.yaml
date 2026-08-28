@@ -1,0 +1,140 @@
+schema_version: "1"
+pillar_spec_version: stage3c-v1
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+required_feature_spec_version: stage3a-v1
+required_normalization_spec_version: stage3b-v1
+required_normalization_spec_hash: 89ec106423a29a8fc477fbc4797f9b8e85dc3863b50e031852b302a49b58b173
+expected_signal_count: 123
+expected_primary_count: 33
+expected_supporting_count: 90
+
+aggregation_method: DIRECT_EQUAL_INDICATOR
+contribution_mapping: TANH_SATURATION
+contribution_mapping_parameters:
+  amplitude: "1"
+  scale: "2"
+coverage_policy:
+  minimum_numerator: 2
+  minimum_denominator: 3
+confidence_method: COVERAGE_ONLY
+latest_selection_method: LATEST_KNOWN_SAME_EOD
+latest_known_search_months: 18
+supporting_usage_default: CONFIRMATION
+supporting_usage_overrides:
+  US_PPI_COMMODITIES__LEVEL__INFLATION_PRESSURE__SIGNAL: NOT_USED_V1
+
+pillars:
+  - pillar_id: US_MACRO__REAL_ACTIVITY_AND_DEMAND
+    display_name: Real Activity and Demand
+    description: Broad real output, consumption, income, and retail demand strength.
+    pillar_role: CORE
+    core_composite_eligible: true
+    semantic_direction: higher means stronger real activity and demand
+    concentration_warning: false
+    primary_indicator_ids:
+      - US_REAL_GDP
+      - US_REAL_PCE
+      - US_REAL_DISPOSABLE_INCOME
+      - US_REAL_RETAIL_SALES
+
+  - pillar_id: US_MACRO__LABOR_STRENGTH
+    display_name: Labor Strength
+    description: Employment, labor utilization, claims, tightness, and hiring strength.
+    pillar_role: CORE
+    core_composite_eligible: true
+    semantic_direction: higher means stronger labor conditions
+    concentration_warning: true
+    primary_indicator_ids:
+      - US_NONFARM_EMPLOYMENT
+      - US_UNEMPLOYMENT_RATE
+      - US_U6_RATE
+      - US_PARTICIPATION_RATE
+      - US_EMPLOYMENT_POP_RATIO
+      - US_INITIAL_CLAIMS
+      - US_CONTINUING_CLAIMS
+      - US_JOB_OPENINGS
+      - US_HIRES
+      - US_QUITS
+      - US_TEMP_HELP_EMPLOYMENT
+
+  - pillar_id: US_MACRO__INFLATION_PRESSURE
+    display_name: Inflation Pressure
+    description: Consumer, producer, and wage inflation pressure; higher is more pressure.
+    pillar_role: CORE
+    core_composite_eligible: true
+    semantic_direction: higher means greater inflation pressure
+    concentration_warning: true
+    primary_indicator_ids:
+      - US_CPI
+      - US_CORE_CPI
+      - US_PCE_PRICE
+      - US_CORE_PCE_PRICE
+      - US_PPI_COMMODITIES
+      - US_AVERAGE_HOURLY_EARNINGS
+
+  - pillar_id: US_MACRO__MANUFACTURING_AND_INVESTMENT
+    display_name: Manufacturing and Investment
+    description: Industrial production, factory utilization, hours, and capital demand.
+    pillar_role: CORE
+    core_composite_eligible: true
+    semantic_direction: higher means stronger manufacturing and investment activity
+    concentration_warning: false
+    primary_indicator_ids:
+      - US_INDUSTRIAL_PRODUCTION
+      - US_MANUFACTURING_HOURS
+      - US_DURABLE_GOODS_ORDERS
+      - US_CORE_CAPITAL_GOODS_ORDERS
+      - US_MANUFACTURING_CAPACITY
+
+  - pillar_id: US_MACRO__HOUSING_STRENGTH
+    display_name: Housing Strength
+    description: New residential construction and permitting activity.
+    pillar_role: CORE
+    core_composite_eligible: true
+    semantic_direction: higher means stronger housing activity
+    concentration_warning: false
+    primary_indicator_ids:
+      - US_HOUSING_STARTS
+      - US_BUILDING_PERMITS
+
+  - pillar_id: US_MACRO__HOUSEHOLD_FINANCIAL_CUSHION
+    display_name: Household Financial Cushion
+    description: Household saving capacity as a contextual financial buffer.
+    pillar_role: CONTEXTUAL
+    core_composite_eligible: false
+    semantic_direction: higher means a larger household financial cushion
+    concentration_warning: false
+    primary_indicator_ids:
+      - US_SAVING_RATE
+
+  - pillar_id: US_MACRO__CREDIT_USAGE_PRESSURE
+    display_name: Credit Usage Pressure
+    description: Household consumer and revolving credit usage pressure.
+    pillar_role: CONTEXTUAL
+    core_composite_eligible: false
+    semantic_direction: higher means greater credit usage pressure
+    concentration_warning: false
+    primary_indicator_ids:
+      - US_CONSUMER_CREDIT
+      - US_REVOLVING_CREDIT
+
+  - pillar_id: US_MACRO__INVENTORY_ACCUMULATION_PRESSURE
+    display_name: Inventory Accumulation Pressure
+    description: Business inventory accumulation as a contextual pressure measure.
+    pillar_role: CONTEXTUAL
+    core_composite_eligible: false
+    semantic_direction: higher means greater inventory accumulation pressure
+    concentration_warning: false
+    primary_indicator_ids:
+      - US_BUSINESS_INVENTORIES
+
+  - pillar_id: US_MACRO__INVENTORY_ABSORPTION_STRENGTH
+    display_name: Inventory Absorption Strength
+    description: Ability of sales to absorb business inventories.
+    pillar_role: CONTEXTUAL
+    core_composite_eligible: false
+    semantic_direction: higher means stronger inventory absorption
+    concentration_warning: false
+    primary_indicator_ids:
+      - US_INVENTORY_SALES_RATIO
