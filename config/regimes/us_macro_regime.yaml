@@ -1,0 +1,81 @@
+schema_version: "1"
+regime_spec_version: stage3e-v1
+required_stage3d_spec_version: stage3d-v1
+required_stage3d_spec_hash: 8be464960ae16c9ce24f79f99fd13708dcb9be996ab5e8dbdcdc9f14880269c4
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+required_feature_spec_version: stage3a-v1
+required_normalization_spec_version: stage3b-v1
+required_normalization_spec_hash: 89ec106423a29a8fc477fbc4797f9b8e85dc3863b50e031852b302a49b58b173
+required_pillar_spec_version: stage3c-v1
+required_pillar_spec_hash: fed386805496d63cc7dd1ed0b6f772a8f821042fc9b04d93884d6c008f6b3d41
+
+architecture: LEVEL_PLUS_TRAJECTORY
+base_taxonomy: HIERARCHICAL_3X3
+evaluation_cadence: ANY_EOD_STATELESS
+hysteresis_policy: NONE
+partial_state_policy: ALLOW_IF_AXES_ELIGIBLE
+missing_axis_policy: FAIL_CLOSED
+context_policy: PASS_THROUGH_ONLY
+
+growth:
+  lower_threshold: "-0.10"
+  upper_threshold: "0.10"
+  minimum_confidence:
+    numerator: 2
+    denominator: 3
+
+inflation:
+  lower_threshold: "-0.10"
+  upper_threshold: "0.10"
+  minimum_confidence:
+    numerator: 2
+    denominator: 3
+
+trajectory:
+  method: DELTA_3M_REAL_TIME_PATH
+  horizon_months: 3
+  lower_threshold: "-0.10"
+  upper_threshold: "0.10"
+
+classification_margin:
+  method: DISTANCE_TO_NEAREST_BOUNDARY
+  warning_threshold: "0.05"
+
+base_regimes:
+  - regime_id: US_MACRO_REGIME__GROWTH_WEAK__INFLATION_PRESSURE_LOW
+    display_name: Weak Growth / Low Inflation Pressure
+    growth_condition: WEAK
+    inflation_condition: LOW_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_WEAK__INFLATION_PRESSURE_NEUTRAL
+    display_name: Weak Growth / Neutral Inflation Pressure
+    growth_condition: WEAK
+    inflation_condition: NEUTRAL_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_WEAK__INFLATION_PRESSURE_HIGH
+    display_name: Weak Growth / High Inflation Pressure
+    growth_condition: WEAK
+    inflation_condition: HIGH_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_NEUTRAL__INFLATION_PRESSURE_LOW
+    display_name: Neutral Growth / Low Inflation Pressure
+    growth_condition: NEUTRAL
+    inflation_condition: LOW_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_NEUTRAL__INFLATION_PRESSURE_NEUTRAL
+    display_name: Neutral Growth / Neutral Inflation Pressure
+    growth_condition: NEUTRAL
+    inflation_condition: NEUTRAL_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_NEUTRAL__INFLATION_PRESSURE_HIGH
+    display_name: Neutral Growth / High Inflation Pressure
+    growth_condition: NEUTRAL
+    inflation_condition: HIGH_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_STRONG__INFLATION_PRESSURE_LOW
+    display_name: Strong Growth / Low Inflation Pressure
+    growth_condition: STRONG
+    inflation_condition: LOW_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_STRONG__INFLATION_PRESSURE_NEUTRAL
+    display_name: Strong Growth / Neutral Inflation Pressure
+    growth_condition: STRONG
+    inflation_condition: NEUTRAL_PRESSURE
+  - regime_id: US_MACRO_REGIME__GROWTH_STRONG__INFLATION_PRESSURE_HIGH
+    display_name: Strong Growth / High Inflation Pressure
+    growth_condition: STRONG
+    inflation_condition: HIGH_PRESSURE
