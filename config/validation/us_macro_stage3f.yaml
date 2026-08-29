@@ -1,0 +1,150 @@
+schema_version: "1"
+validation_spec_version: stage3f-v1
+validation_phase: PILOT
+
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+required_feature_spec_version: stage3a-v1
+required_feature_spec_hash: 98fb31252c5fb2fca2fabec1c8a401c38c7eb9c0d78ace4847c3a3d73e586019
+required_normalization_spec_version: stage3b-v1
+required_normalization_spec_hash: 89ec106423a29a8fc477fbc4797f9b8e85dc3863b50e031852b302a49b58b173
+required_pillar_spec_version: stage3c-v1
+required_pillar_spec_hash: fed386805496d63cc7dd1ed0b6f772a8f821042fc9b04d93884d6c008f6b3d41
+required_composite_spec_version: stage3d-v1
+required_composite_spec_hash: 8be464960ae16c9ce24f79f99fd13708dcb9be996ab5e8dbdcdc9f14880269c4
+required_regime_spec_version: stage3e-v1
+required_regime_spec_hash: 27b8ea51f1c867b75410b763b2cc91600a3652e5b90e9f29b0136ffb34e37fcf
+
+universe_modes:
+  - FULL_FIXED_UNIVERSE
+  - DYNAMIC_REAL_TIME_UNIVERSE
+
+cadence:
+  primary: RELEASE_EVENT_EOD
+  benchmark: MONTH_END_EOD
+  pit_granularity: DATE_EOD
+  same_day_policy: COALESCE
+  intraday_reconstruction: false
+
+materialization:
+  strategy: RELEASE_EVENT_AWARE_HYBRID
+  reuse_exact_local_snapshots: true
+  fetch_only_exact_snapshot_misses: true
+  indicator_major_discovery: true
+  date_major_production_replay: true
+  sensitivity_refetch_allowed: false
+
+coverage_boundaries:
+  - RAW_PIT_START
+  - FEATURE_PIT_START
+  - SIGNAL_PIT_START
+  - PILLAR_PIT_START
+  - MACRO_STATE_PIT_START
+  - REGIME_LEVEL_PIT_START
+  - REGIME_TRAJECTORY_PIT_START
+
+pilot_planner:
+  discovery_lookback_days: 180
+  minimum_window_days: 7
+  maximum_window_days: 31
+  maximum_release_events: 8
+  require_frequencies:
+    - weekly
+    - monthly
+    - quarterly
+  require_primary_source_families: 3
+
+budgets:
+  pilot:
+    external_alfred_http_requests: 2000
+    incremental_storage_bytes: 2147483648
+    wall_clock_seconds: 28800
+    alfred_concurrency: 1
+    global_http_concurrency: 4
+    per_source_http_concurrency: 2
+  provisional_full_run:
+    external_alfred_http_requests: 25000
+    incremental_storage_bytes: 2147483648
+    wall_clock_seconds: 28800
+    approved: false
+
+trajectory:
+  production_horizon_months: 3
+  path: REAL_TIME_PATH
+  lag_endpoint_must_be_schedule_event: false
+
+sensitivity:
+  neutral_bands:
+    - "0"
+    - "0.05"
+    - "0.10"
+    - "0.15"
+    - "0.20"
+    - "0.25"
+  trajectory_horizons_months: [1, 3, 6]
+  trajectory_stable_bands:
+    - "0"
+    - "0.05"
+    - "0.10"
+    - "0.15"
+    - "0.20"
+  confidence_gates:
+    - numerator: 1
+      denominator: 2
+    - numerator: 3
+      denominator: 5
+    - numerator: 2
+      denominator: 3
+    - numerator: 3
+      denominator: 4
+    - numerator: 4
+      denominator: 5
+    - numerator: 1
+      denominator: 1
+  production:
+    neutral_band: "0.10"
+    trajectory_horizon_months: 3
+    trajectory_stable_band: "0.10"
+    confidence_gate:
+      numerator: 2
+      denominator: 3
+  deferred:
+    - STAGE3C_TANH_SCALE
+    - STAGE3C_PILLAR_COVERAGE
+    - STAGE3D_GROWTH_QUORUM
+
+hysteresis_research:
+  policies:
+    - NONE
+    - ENTER_EXIT
+    - 2_CONSECUTIVE
+    - 3_CONSECUTIVE
+  production_writeback: false
+  automatic_ranking: false
+
+revision_sensitivity:
+  mode: LIMITED
+  indicators:
+    - US_REAL_GDP
+    - US_NONFARM_EMPLOYMENT
+    - US_CPI
+  build_alternate_latest_revised_history: false
+
+quality_hard_gates:
+  - FUTURE_LEAKAGE
+  - PRODUCTION_AUTHORITY_DRIFT
+  - DETERMINISTIC_REPLAY_MISMATCH
+  - CLASSIFIED_RESULT_PIT_UNSAFE
+  - CURRENT_LAG_SAME_AS_OF_VIOLATION
+  - CREDENTIAL_LEAKAGE
+
+checkpoint_path: outputs/stage3f/checkpoint.json
+artifact_root: outputs/stage3f
+artifact_formats:
+  manifest: JSON
+  status: JSON
+  sensitivity: JSON
+  provenance: JSONL
+  tabular: CSV
+  report: MARKDOWN
+  parquet_enabled: false

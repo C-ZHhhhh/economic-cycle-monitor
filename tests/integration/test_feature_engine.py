@@ -186,6 +186,7 @@ async def test_revised_pit_snapshot_changes_feature_without_overwriting_current(
         select(RawObservation).where(
             RawObservation.indicator_id == "US_CPI",
             RawObservation.source == "bls",
+            RawObservation.observation_date == date(2024, 4, 1),
         )
     )
     assert before[0].value != after[0].value

@@ -62,6 +62,8 @@ from app.source_registry.audit import audit_materialized_policy, audit_source_re
 from app.source_registry.config import load_source_registry
 from app.source_registry.health import indicator_source_health, provider_health
 from app.source_registry.readiness import validate_data_layer as validate_data_layer_service
+from app.validation.config import load_validation_catalog
+from app.validation.service import HistoricalValidationService
 
 app = typer.Typer(
     name="economic-cycle-monitor",
@@ -376,6 +378,43 @@ def validate_data_layer_command(
     _render(result.model_dump(mode="json"), json_output)
     if not result.current_data_ready:
         raise typer.Exit(code=1)
+
+
+@app.command("validate-stage3f-config")
+def validate_stage3f_config_command(
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate the Stage 3F authority without database or network access."""
+    try:
+        catalog = load_validation_catalog()
+    except (OSError, RuntimeError, ValueError, ValidationError):
+        _fail("Stage 3F validation authority is invalid")
+    _render(
+        {
+            "validation_spec_version": catalog.validation_spec_version,
+            "validation_spec_hash": catalog.specification_hash,
+            "validation_phase": catalog.validation_phase.value,
+            "full_historical_run_approved": (catalog.budgets.provisional_full_run.approved),
+        },
+        json_output,
+    )
+
+
+@app.command("run-stage3f-pilot")
+def run_stage3f_pilot_command(
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run the approved bounded date-EOD Stage 3F pilot only."""
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        with db_session(engine) as session:
+            summary = asyncio.run(HistoricalValidationService(session, settings).run_pilot())
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError):
+        _fail("Stage 3F bounded pilot stopped safely; inspect the local checkpoint")
+    finally:
+        engine.dispose()
+    _render(summary.model_dump(mode="json"), json_output)
 
 
 @app.command("list-indicators")

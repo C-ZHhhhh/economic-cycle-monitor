@@ -24,6 +24,7 @@ from app.data_sources.fred.schemas import (
 )
 
 Sleep = Callable[[float], Awaitable[None]]
+AttemptGuard = Callable[[str, dict[str, str], int], None]
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
@@ -51,6 +52,7 @@ class FredClient:
         raw_store: FredRawStore,
         transport: httpx.AsyncBaseTransport | None = None,
         sleep: Sleep = asyncio.sleep,
+        attempt_guard: AttemptGuard | None = None,
     ) -> None:
         self._api_key = api_key
         self._max_retries = max_retries
@@ -58,6 +60,7 @@ class FredClient:
         self._cache = cache
         self._raw_store = raw_store
         self._sleep = sleep
+        self._attempt_guard = attempt_guard
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/") + "/",
             timeout=timeout_seconds,
@@ -111,6 +114,8 @@ class FredClient:
         last_error: Exception | None = None
         for attempt in range(1, self._max_retries + 2):
             try:
+                if self._attempt_guard is not None:
+                    self._attempt_guard(endpoint, safe_parameters, attempt)
                 response = await self._client.get(endpoint.lstrip("/"), params=authenticated)
                 if response.status_code in RETRYABLE_STATUS_CODES:
                     if attempt <= self._max_retries:
