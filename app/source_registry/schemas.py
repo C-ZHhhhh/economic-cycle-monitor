@@ -344,6 +344,15 @@ class EffectiveObservation(BaseModel):
     vintage_as_of: date | None
     vintage_source: str | None
     is_point_in_time_safe: bool
+    evaluation_as_of: date | None = None
+    source_information_set_date: date | None = None
+    information_set_hash: str | None = None
+    index_generation_hash: str | None = None
+    pit_materialization_spec_version: str | None = None
+    pit_materialization_spec_hash: str | None = None
+    calculation_provenance_version: str | None = None
+    calculation_provenance_hash: str | None = None
+    evaluation_result_hash: str | None = None
 
 
 class HealthSnapshot(BaseModel):

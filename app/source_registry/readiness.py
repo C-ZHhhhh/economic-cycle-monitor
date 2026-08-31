@@ -17,6 +17,7 @@ from app.source_registry.health import (
     indicator_source_health,
     provider_health,
 )
+from app.source_registry.materialization import load_pit_materialization_catalog
 from app.source_registry.schemas import ReadinessStatus, RuntimeHealth, SourceRegistryCatalog
 
 
@@ -69,6 +70,12 @@ def validate_data_layer(
         for policy in source_registry.policies
         if policy.vintage.backtest_safety == "UNVERIFIED"
     ]
+    try:
+        load_pit_materialization_catalog(source_registry=source_registry)
+    except (OSError, ValueError) as error:
+        pit_contract_blockers.append(
+            f"PIT_MATERIALIZATION_AUTHORITY_INVALID:{type(error).__name__}"
+        )
     alfred_health = provider_health(
         session,
         "fred",

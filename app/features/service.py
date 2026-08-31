@@ -43,7 +43,7 @@ class FeatureRegistryMismatch(FeatureEngineError):
 
 
 def _observation_payload(item: EffectiveObservation) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "indicator_id": item.indicator_id,
         "observation_date": item.observation_date.isoformat(),
         "value": str(item.value),
@@ -58,11 +58,31 @@ def _observation_payload(item: EffectiveObservation) -> dict[str, Any]:
         "provider_health": item.provider_health.value,
         "indicator_source_health": item.indicator_source_health.value,
         "release_date": item.release_date.isoformat() if item.release_date else None,
-        "retrieved_at": item.retrieved_at.isoformat() if item.retrieved_at else None,
         "vintage_as_of": item.vintage_as_of.isoformat() if item.vintage_as_of else None,
         "vintage_source": item.vintage_source,
         "is_point_in_time_safe": item.is_point_in_time_safe,
     }
+    if item.evaluation_as_of is None:
+        payload["retrieved_at"] = item.retrieved_at.isoformat() if item.retrieved_at else None
+    else:
+        payload.update(
+            {
+                "calculation_provenance_version": item.calculation_provenance_version,
+                "calculation_provenance_hash": item.calculation_provenance_hash,
+                "evaluation_as_of": item.evaluation_as_of.isoformat(),
+                "source_information_set_date": (
+                    item.source_information_set_date.isoformat()
+                    if item.source_information_set_date
+                    else None
+                ),
+                "information_set_hash": item.information_set_hash,
+                "index_generation_hash": item.index_generation_hash,
+                "pit_materialization_spec_version": item.pit_materialization_spec_version,
+                "pit_materialization_spec_hash": item.pit_materialization_spec_hash,
+                "evaluation_result_hash": item.evaluation_result_hash,
+            }
+        )
+    return payload
 
 
 def _hash_payload(value: object) -> str:

@@ -17,6 +17,27 @@ from app.database.models import (
 )
 from app.source_registry.config import load_source_registry, storage_source_name
 from app.source_registry.health import INTEGRITY_EVENT_TYPES, indicator_source_health
+from app.source_registry.information_sets import (
+    InformationSetHashMismatch,
+    InformationSetMalformed,
+    evaluation_result_hash,
+    find_information_set,
+    information_set_rows,
+    verify_information_set,
+)
+from app.source_registry.materialization import (
+    PitMaterializationCatalog,
+    load_pit_materialization_catalog,
+)
+from app.source_registry.pit_index import (
+    ChangeIndexIncomplete,
+    ChangeIndexNoVintage,
+    ChangeIndexOutsideCoverage,
+    ChangeIndexStale,
+    ChangeIndexUnavailable,
+    authoritative_generation,
+    source_information_set_date,
+)
 from app.source_registry.schemas import (
     EffectiveObservation,
     FallbackReason,
@@ -47,6 +68,65 @@ class PITCoverageUnverified(SourceResolutionError):
 
 class PITSnapshotNotCached(SourceResolutionError):
     """The requested exact-date ALFRED information set is not stored locally."""
+
+
+class PITChangeIndexIncomplete(SourceResolutionError):
+    """The local change index cannot prove complete coverage for the target EOD."""
+
+
+class PITChangeIndexUnavailable(SourceResolutionError):
+    """No usable change-index generation is available for the target EOD."""
+
+
+class PITOutsideCoverage(SourceResolutionError):
+    """A complete index proves the target precedes the first information set."""
+
+    def __init__(self, indicator_id: str, evaluation_as_of: date) -> None:
+        super().__init__(
+            f"PIT_PROVEN_OUTSIDE_COVERAGE:{indicator_id}:{evaluation_as_of.isoformat()}"
+        )
+        self.indicator_id = indicator_id
+        self.evaluation_as_of = evaluation_as_of
+        self.availability_status = PITAvailabilityStatus.OUTSIDE_COVERAGE
+
+
+class PITNoVintage(SourceResolutionError):
+    """A complete provider index contains no vintage information sets."""
+
+    def __init__(self, indicator_id: str, evaluation_as_of: date) -> None:
+        super().__init__(f"PIT_NO_VINTAGE:{indicator_id}:{evaluation_as_of.isoformat()}")
+        self.indicator_id = indicator_id
+        self.evaluation_as_of = evaluation_as_of
+        self.availability_status = PITAvailabilityStatus.NO_VINTAGE
+
+
+class PITInformationSetNotCached(SourceResolutionError):
+    """The selected source information set has not been materialized."""
+
+    def __init__(
+        self,
+        indicator_id: str,
+        evaluation_as_of: date,
+        source_information_set_date: date,
+        generation_id: int,
+    ) -> None:
+        super().__init__(
+            "PIT_INFORMATION_SET_NOT_FOUND:"
+            f"{indicator_id}:{evaluation_as_of.isoformat()}:"
+            f"{source_information_set_date.isoformat()}"
+        )
+        self.indicator_id = indicator_id
+        self.evaluation_as_of = evaluation_as_of
+        self.source_information_set_date = source_information_set_date
+        self.generation_id = generation_id
+
+
+class PITInformationSetMalformed(SourceResolutionError):
+    """A persisted semantic information set violates its immutable contract."""
+
+
+class PITInformationSetHashMismatch(SourceResolutionError):
+    """A persisted semantic snapshot no longer reproduces its header hash."""
 
 
 class SourceIntegrityError(SourceResolutionError):
@@ -105,7 +185,16 @@ def _mapping_quality(mapping: IndicatorSourceMapping | None) -> MappingQuality:
     raise SourceIntegrityError(f"MAPPING_NOT_PRODUCTION_ELIGIBLE:{mapping.mapping_status}")
 
 
-def _resolve_pit(
+def _assert_pit_policy(policy: SourceRegistryPolicy) -> None:
+    if (
+        policy.vintage.capability != "PIT_SAFE_VIA_ALFRED_PROXY"
+        or policy.vintage.backtest_safety != "PIT_SAFE_DATE_EOD"
+        or policy.vintage.information_set_semantics != "END_OF_DAY"
+    ):
+        raise PITCoverageUnverified(policy.indicator_id, policy.vintage.capability)
+
+
+def resolve_pit_exact_baseline(
     session: Session,
     policy: SourceRegistryPolicy,
     indicator: IndicatorRegistry,
@@ -115,12 +204,8 @@ def _resolve_pit(
     as_of: date,
     registry_hash: str,
 ) -> list[EffectiveObservation]:
-    if (
-        policy.vintage.capability != "PIT_SAFE_VIA_ALFRED_PROXY"
-        or policy.vintage.backtest_safety != "PIT_SAFE_DATE_EOD"
-        or policy.vintage.information_set_semantics != "END_OF_DAY"
-    ):
-        raise PITCoverageUnverified(policy.indicator_id, policy.vintage.capability)
+    """Resolve one immutable DLCR-001 exact snapshot for explicit equivalence only."""
+    _assert_pit_policy(policy)
     snapshot_exists = session.scalar(
         select(ObservationVintage.id)
         .where(
@@ -176,8 +261,114 @@ def _resolve_pit(
             vintage_as_of=as_of,
             vintage_source=SourceSystem.ALFRED_VINTAGE.value,
             is_point_in_time_safe=True,
+            evaluation_as_of=as_of,
         )
         for item in latest_by_date.values()
+    ]
+
+
+def _resolve_pit(
+    session: Session,
+    policy: SourceRegistryPolicy,
+    indicator: IndicatorRegistry,
+    *,
+    start: date,
+    end: date,
+    as_of: date,
+    registry_hash: str,
+    materialization: PitMaterializationCatalog,
+) -> list[EffectiveObservation]:
+    """Resolve one evaluation EOD through a proven semantic information set."""
+    _assert_pit_policy(policy)
+    if as_of > materialization.closed_eod.latest_closed_date():
+        raise PITChangeIndexUnavailable("PIT_CHANGE_INDEX_STALE:OPEN_EOD")
+    try:
+        generation = authoritative_generation(
+            session,
+            indicator_id=policy.indicator_id,
+            provider_series_id=indicator.fred_series_id or policy.primary_source_identity,
+            evaluation_as_of=as_of,
+            source_registry_hash=registry_hash,
+            materialization=materialization,
+        )
+        information_date = source_information_set_date(generation, as_of)
+    except ChangeIndexIncomplete as error:
+        raise PITChangeIndexIncomplete(str(error)) from error
+    except ChangeIndexOutsideCoverage as error:
+        raise PITOutsideCoverage(policy.indicator_id, as_of) from error
+    except ChangeIndexNoVintage as error:
+        raise PITNoVintage(policy.indicator_id, as_of) from error
+    except (ChangeIndexStale, ChangeIndexUnavailable) as error:
+        raise PITChangeIndexUnavailable(str(error)) from error
+    provider_series_id = indicator.fred_series_id or policy.primary_source_identity
+    information_set = find_information_set(
+        session,
+        indicator_id=policy.indicator_id,
+        provider_series_id=provider_series_id,
+        source_information_set_date=information_date,
+        source_registry_hash=registry_hash,
+        materialization=materialization,
+    )
+    if information_set is None:
+        raise PITInformationSetNotCached(
+            policy.indicator_id,
+            as_of,
+            information_date,
+            generation.id,
+        )
+    try:
+        verify_information_set(
+            session,
+            information_set,
+            unit=policy.canonical.unit,
+            frequency=policy.canonical.frequency,
+            materialization=materialization,
+        )
+        rows = information_set_rows(session, information_set, start=start, end=end)
+    except InformationSetHashMismatch as error:
+        raise PITInformationSetHashMismatch(str(error)) from error
+    except InformationSetMalformed as error:
+        raise PITInformationSetMalformed(str(error)) from error
+    result_hash = evaluation_result_hash(
+        evaluation_as_of=as_of,
+        information_hash=information_set.information_set_hash,
+        start=start,
+        end=end,
+        materialization=materialization,
+    )
+    return [
+        EffectiveObservation(
+            indicator_id=policy.indicator_id,
+            observation_date=item.observation_date,
+            value=Decimal(item.current_value),
+            unit=policy.canonical.unit,
+            frequency=policy.canonical.frequency,
+            source_used="fred",
+            source_identity=provider_series_id,
+            source_policy_version=policy.registry_policy_version,
+            registry_hash=registry_hash,
+            mapping_version=f"alfred:{policy.registry_policy_version}",
+            is_fallback=False,
+            resolution_reason="ALFRED_SEMANTIC_INFORMATION_SET",
+            mapping_quality=MappingQuality.VALID,
+            provider_health=RuntimeHealth.HEALTHY,
+            indicator_source_health=RuntimeHealth.HEALTHY,
+            release_date=item.release_date,
+            retrieved_at=item.retrieved_at,
+            vintage_as_of=as_of,
+            vintage_source=SourceSystem.ALFRED_VINTAGE.value,
+            is_point_in_time_safe=True,
+            evaluation_as_of=as_of,
+            source_information_set_date=information_date,
+            information_set_hash=information_set.information_set_hash,
+            index_generation_hash=generation.generation_hash,
+            pit_materialization_spec_version=(materialization.pit_materialization_spec_version),
+            pit_materialization_spec_hash=materialization.specification_hash,
+            calculation_provenance_version=materialization.calculation_provenance.version,
+            calculation_provenance_hash=materialization.calculation_provenance_hash,
+            evaluation_result_hash=result_hash,
+        )
+        for item in rows
     ]
 
 
@@ -217,6 +408,7 @@ def get_effective_observations(
     as_of: date | datetime | None = None,
     *,
     registry: SourceRegistryCatalog | None = None,
+    materialization: PitMaterializationCatalog | None = None,
     today: date | None = None,
     evaluated_at: datetime | None = None,
 ) -> list[EffectiveObservation]:
@@ -236,6 +428,9 @@ def get_effective_observations(
     if indicator is None:
         raise SourceResolutionError(f"INDICATOR_NOT_MATERIALIZED:{indicator_id}")
     if as_of is not None:
+        pit_materialization = materialization or load_pit_materialization_catalog(
+            source_registry=source_registry
+        )
         return _resolve_pit(
             session,
             policy,
@@ -244,6 +439,7 @@ def get_effective_observations(
             end=end,
             as_of=as_of,
             registry_hash=source_registry.registry_hash,
+            materialization=pit_materialization,
         )
 
     _assert_no_integrity_conflict(session, indicator_id)

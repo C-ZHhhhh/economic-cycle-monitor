@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 from app.features.cache import FeatureCacheKey, FeatureResultCache
 from app.features.config import load_feature_catalog
 from app.features.schemas import FeatureStatus, QualityFlag
-from app.features.service import FeatureEngine, FeatureNotFound, FeatureRegistryMismatch
+from app.features.service import (
+    FeatureEngine,
+    FeatureNotFound,
+    FeatureRegistryMismatch,
+    _input_hash,
+    _observation_payload,
+)
 from app.source_registry.config import load_source_registry
 from app.source_registry.resolver import PITGranularityUnsupported, SourceIntegrityError
 from app.source_registry.schemas import EffectiveObservation, MappingQuality, RuntimeHealth
@@ -103,6 +109,35 @@ def _cpi_series(
         _observation("US_CPI", item, value, as_of=as_of, safe=safe)
         for item, value in zip(dates, values, strict=True)
     ]
+
+
+def test_current_input_hash_ignores_dlcr003_pit_provenance_fields() -> None:
+    current = _observation("US_CPI", date(2024, 4, 1), "103")
+    populated_non_evaluation_fields = current.model_copy(
+        update={
+            "source_information_set_date": date(2024, 5, 1),
+            "information_set_hash": "a" * 64,
+            "index_generation_hash": "b" * 64,
+            "pit_materialization_spec_version": "pit-materialization-v2",
+            "pit_materialization_spec_hash": "c" * 64,
+            "calculation_provenance_version": "pit-calculation-provenance-v2",
+            "calculation_provenance_hash": "d" * 64,
+            "evaluation_result_hash": "e" * 64,
+        }
+    )
+
+    assert _input_hash([current]) == _input_hash([populated_non_evaluation_fields])
+    assert not {
+        "evaluation_as_of",
+        "source_information_set_date",
+        "information_set_hash",
+        "index_generation_hash",
+        "pit_materialization_spec_version",
+        "pit_materialization_spec_hash",
+        "calculation_provenance_version",
+        "calculation_provenance_hash",
+        "evaluation_result_hash",
+    }.intersection(_observation_payload(populated_non_evaluation_fields))
 
 
 @pytest.mark.asyncio

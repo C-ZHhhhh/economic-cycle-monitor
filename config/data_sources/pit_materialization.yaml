@@ -1,0 +1,83 @@
+schema_version: "1.0.0"
+pit_materialization_spec_version: pit-materialization-v2
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+
+change_index:
+  provider: ALFRED_VINTAGE
+  endpoint: series/vintagedates
+  page_limit: 10000
+  sort_order: asc
+  require_stable_count: true
+  require_contiguous_offsets: true
+  require_unique_dates: true
+  require_strict_date_order: true
+  require_retrieved_count_match: true
+  immutable_generations: true
+
+closed_eod:
+  policy: PRIOR_UTC_CALENDAR_DATE
+  timezone: UTC
+
+information_set:
+  provider: ALFRED_VINTAGE
+  endpoint: series/observations
+  observation_sort: observation_date_ascending
+  identity_components:
+    - indicator_id
+    - provider
+    - provider_series_id
+    - source_information_set_date
+    - source_registry_hash
+    - pit_materialization_spec_hash
+    - official_source_contract_identity
+    - canonical_unit
+    - canonical_frequency
+    - canonical_observations
+  excluded_identity_components:
+    - evaluation_as_of
+    - retrieved_at
+    - request_id
+    - sync_run_id
+    - retry_count
+    - http_ordering
+    - raw_path
+    - cache_path
+    - computed_at
+    - runtime
+
+resolver:
+  lookup: LATEST_CHANGE_ON_OR_BEFORE_EVALUATION_EOD
+  semantic_snapshot_reuse: true
+  exact_network_fallback: false
+  incomplete_index_behavior: FAIL_CLOSED
+  unavailable_index_behavior: FAIL_CLOSED
+  stale_index_behavior: REFRESH_OR_FAIL_CLOSED
+  current_path_isolated: true
+
+refresh:
+  stale_target_policy: INCREMENTAL_REFRESH_OR_FAIL_CLOSED
+  generation_policy: CREATE_IMMUTABLE_GENERATION
+  historical_reconciliation: ADD_REMOVE_CORRECTION_DIFF
+  invalidation_policy: PRECISE_CHANGED_DATE_INTERVALS
+  mutate_prior_generation: false
+
+legacy:
+  preserve_exact_snapshots: true
+  preserve_vintage_date_semantics: true
+  exact_resolver_role: BASELINE_EQUIVALENCE_COMPARATOR_ONLY
+
+calculation_provenance:
+  version: pit-calculation-provenance-v2
+  source_hash_includes_evaluation_as_of: false
+  evaluation_hash_includes_evaluation_as_of: true
+  current_hash_compatibility: PRESERVE_V1
+
+bulk_observations:
+  enabled: false
+  deferred_contract: DLCR-003B
+
+concurrency:
+  alfred_materialization: 1
+  global_http_max: 4
+  per_source_http_max: 2

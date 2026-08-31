@@ -178,3 +178,30 @@ version. Their fingerprint includes scope, domain, indicator, as-of date, status
 category. Existing audit rows remain immutable. Legacy rows are classified as PIT only from
 reliable run operation, run parameters, or exact realtime request evidence; ambiguous legacy
 records remain conservatively visible to current-health review.
+
+## DLCR-003 amendment: semantic PIT information sets
+
+DLCR-003 replaces production exact-evaluation-date snapshot lookup with a versioned semantic
+information-set resolver. The frozen economic source registry remains `stage2b5-v3`; no source,
+unit, frequency, seasonal-adjustment, release-date, or revision policy changed.
+
+The requested `evaluation_as_of` is now explicitly separate from the latest official
+`source_information_set_date` known by that EOD. A complete immutable ALFRED vintage-change
+index selects the latter with a latest-on-or-before lookup. One immutable semantic snapshot is
+then reused until the next official change date. `information_set_hash` identifies canonical
+economic content, while `evaluation_result_hash` identifies the requested EOD and range.
+
+Migration 0005 adds immutable change-index generations, semantic information-set headers, and
+a nullable restrictive observation link. Legacy exact snapshots and all request, sync, and
+quality audit history remain untouched. The exact resolver is retained only as the explicit
+Stage 3F-v2 equivalence comparator; production resolution never silently falls back to it.
+
+Index incompleteness, staleness, unavailability, malformed information sets, and hash mismatches
+fail closed in `PIT_AVAILABILITY` / `ALFRED_VINTAGE` scope and do not contaminate current-source
+health. The current resolver path and current calculation hashes remain isolated. Bulk ALFRED
+reconstruction is deferred to a separately reviewed DLCR-003B.
+
+The merge gate is the complete First Pilot offline comparison: all 594 exact indicator/EOD
+pairs plus Stage 3A through Stage 3E economic outputs and new-provenance calculation hashes must
+match with zero network requests, future leakage, same-as-of violations, or PIT-unsafe
+classification.

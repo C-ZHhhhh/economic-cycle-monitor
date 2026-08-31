@@ -25,6 +25,8 @@ def test_metadata_contains_stage_one_through_stage_two_b_tables() -> None:
         "data_quality_events",
         "indicator_source_mappings",
         "source_comparison_results",
+        "pit_change_index_generations",
+        "pit_information_sets",
     }
 
 

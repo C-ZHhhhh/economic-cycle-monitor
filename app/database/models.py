@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -126,6 +127,127 @@ class RawObservation(TimestampMixin, Base):
     )
 
 
+class PitChangeIndexGeneration(TimestampMixin, Base):
+    """Immutable evidence for one complete or failed ALFRED change-index discovery."""
+
+    __tablename__ = "pit_change_index_generations"
+    __table_args__ = (
+        UniqueConstraint(
+            "indicator_id",
+            "provider",
+            "provider_series_id",
+            "generation_hash",
+            name="uq_pit_change_index_generation_identity",
+        ),
+        CheckConstraint("provider_count >= 0", name="provider_count_nonnegative"),
+        CheckConstraint("retrieved_count >= 0", name="retrieved_count_nonnegative"),
+        CheckConstraint("page_count >= 0", name="page_count_nonnegative"),
+        Index(
+            "ix_pit_change_index_generation_lookup",
+            "indicator_id",
+            "provider",
+            "provider_series_id",
+            "status",
+            "index_complete_through",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    indicator_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(INDICATOR_FK, onupdate="CASCADE", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_series_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    index_coverage_start: Mapped[date] = mapped_column(Date, nullable=False)
+    index_coverage_end: Mapped[date] = mapped_column(Date, nullable=False)
+    index_complete_through: Mapped[date | None] = mapped_column(Date)
+    provider_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    retrieved_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_dates_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    pagination_evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    generation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_registry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    pit_materialization_spec_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    pit_materialization_spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    sync_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(SYNC_RUN_FK, ondelete="SET NULL")
+    )
+    supersedes_generation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("pit_change_index_generations.id", ondelete="RESTRICT"),
+    )
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PitInformationSet(TimestampMixin, Base):
+    """Immutable semantic identity and lifecycle for one ALFRED information set."""
+
+    __tablename__ = "pit_information_sets"
+    __table_args__ = (
+        UniqueConstraint(
+            "indicator_id",
+            "provider",
+            "provider_series_id",
+            "source_information_set_date",
+            "source_registry_hash",
+            "pit_materialization_spec_hash",
+            "information_set_hash",
+            name="uq_pit_information_set_identity",
+        ),
+        CheckConstraint("observation_count >= 0", name="observation_count_nonnegative"),
+        Index(
+            "ix_pit_information_set_lookup",
+            "indicator_id",
+            "provider",
+            "provider_series_id",
+            "source_information_set_date",
+            "status",
+        ),
+        Index("ix_pit_information_set_hash", "information_set_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    indicator_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(INDICATOR_FK, onupdate="CASCADE", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_series_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_information_set_date: Mapped[date] = mapped_column(Date, nullable=False)
+    information_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    official_source_contract_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_registry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    pit_materialization_spec_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    pit_materialization_spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    index_generation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pit_change_index_generations.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    missing_observation_dates_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    earliest_observation_date: Mapped[date | None] = mapped_column(Date)
+    latest_observation_date: Mapped[date | None] = mapped_column(Date)
+    raw_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    legacy_vintage_date: Mapped[date | None] = mapped_column(Date)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sync_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(SYNC_RUN_FK, ondelete="SET NULL")
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_by_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("pit_information_sets.id", ondelete="RESTRICT"),
+    )
+
+
 class ObservationVintage(TimestampMixin, Base):
     """Point-in-time release and revision history for an observation."""
 
@@ -142,6 +264,13 @@ class ObservationVintage(TimestampMixin, Base):
         CheckConstraint("revision_number >= 0", name="revision_number_nonnegative"),
         Index("ix_observation_vintages_observation_date", "observation_date"),
         Index("ix_observation_vintages_available_at", "available_at"),
+        Index(
+            "uq_observation_vintages_information_set_date",
+            "pit_information_set_id",
+            "observation_date",
+            unique=True,
+            postgresql_where=text("pit_information_set_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -164,6 +293,14 @@ class ObservationVintage(TimestampMixin, Base):
     source_vintage_date: Mapped[date | None] = mapped_column(Date)
     retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_payload_hash: Mapped[str | None] = mapped_column(String(64))
+    pit_information_set_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "pit_information_sets.id",
+            ondelete="RESTRICT",
+            name="fk_obs_vintage_pit_info_set",
+        ),
+    )
     source_details_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default="{}", nullable=False
     )
