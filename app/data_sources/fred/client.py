@@ -21,6 +21,7 @@ from app.data_sources.fred.schemas import (
     FredPayload,
     FredRelease,
     FredSeriesMetadata,
+    FredVintageDatePage,
 )
 
 Sleep = Callable[[float], Awaitable[None]]
@@ -263,3 +264,28 @@ class FredClient:
         except (KeyError, ValidationError) as exc:
             raise FredResponseError("FRED vintage dates response is invalid") from exc
         return values, payload
+
+    async def get_vintage_date_page(
+        self,
+        series_id: str,
+        *,
+        realtime_start: date,
+        realtime_end: date,
+        limit: int = 10_000,
+        offset: int = 0,
+    ) -> tuple[FredVintageDatePage, FredPayload]:
+        """Return one explicit vintage-date page for completeness-checked discovery."""
+        payload = await self.request_json(
+            "series/vintagedates",
+            series_id=series_id,
+            realtime_start=realtime_start,
+            realtime_end=realtime_end,
+            limit=limit,
+            offset=offset,
+            sort_order="asc",
+        )
+        try:
+            page = FredVintageDatePage.model_validate(payload.body)
+        except ValidationError as exc:
+            raise FredResponseError("FRED vintage-date page is invalid") from exc
+        return page, payload

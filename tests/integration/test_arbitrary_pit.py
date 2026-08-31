@@ -23,6 +23,7 @@ from app.data_quality.scope import (
 from app.data_sources.fred.cache import FredFileCache
 from app.data_sources.fred.client import FredClient
 from app.data_sources.fred.raw_store import FredRawStore
+from app.data_sources.fred.schemas import FredPayload, FredVintageDatePage
 from app.database.models import (
     DataQualityEvent,
     DataSourceRequest,
@@ -35,11 +36,18 @@ from app.indicators.service import seed_indicator_catalog
 from app.settings import Settings
 from app.source_registry.config import load_source_registry
 from app.source_registry.health import provider_health
+from app.source_registry.materialization import load_pit_materialization_catalog
 from app.source_registry.pit import PITSnapshotFetchFailed, get_effective_observations_on_demand
+from app.source_registry.pit_index import (
+    persist_change_index_generation,
+    validate_change_index_pages,
+)
 from app.source_registry.resolver import (
+    PITChangeIndexUnavailable,
     PITCoverageUnverified,
     PITGranularityUnsupported,
-    PITSnapshotNotCached,
+    PITNoVintage,
+    PITOutsideCoverage,
     get_effective_observations,
 )
 from app.source_registry.schemas import RuntimeHealth, SourceRegistryCatalog
@@ -68,7 +76,9 @@ def _client(
     handler: httpx.AsyncBaseTransport,
     *,
     cache_enabled: bool = True,
+    auto_index: bool = True,
 ) -> FredClient:
+    transport = _DefaultIndexTransport(handler) if auto_index else handler
     return FredClient(
         api_key=SecretStr(TEST_KEY),
         base_url="https://fred.invalid/fred",
@@ -77,8 +87,32 @@ def _client(
         retry_base_seconds=0,
         cache=FredFileCache(tmp_path / "cache", ttl_seconds=3600, enabled=cache_enabled),
         raw_store=FredRawStore(tmp_path / "raw"),
-        transport=handler,
+        transport=transport,
     )
+
+
+class _DefaultIndexTransport(httpx.AsyncBaseTransport):
+    """Supply one complete semantic change date before delegating observation calls."""
+
+    def __init__(self, delegate: httpx.AsyncBaseTransport) -> None:
+        self.delegate = delegate
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("series/vintagedates"):
+            change_date = request.url.params["realtime_end"]
+            return httpx.Response(
+                200,
+                json={
+                    "count": 1,
+                    "offset": int(request.url.params.get("offset", "0")),
+                    "limit": int(request.url.params.get("limit", "10000")),
+                    "vintage_dates": [change_date],
+                },
+            )
+        return await self.delegate.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self.delegate.aclose()
 
 
 def _response(
@@ -102,6 +136,59 @@ def _response(
                 }
             ]
         },
+    )
+
+
+def _persist_complete_index(
+    session: Session,
+    registry: SourceRegistryCatalog,
+    *,
+    change_dates: list[date],
+    complete_through: date,
+) -> None:
+    """Persist complete synthetic pagination evidence for a fail-closed lookup test."""
+    materialization = load_pit_materialization_catalog(source_registry=registry)
+    now = datetime(2026, 8, 31, tzinfo=UTC)
+    payload = FredPayload(
+        endpoint="series/vintagedates",
+        series_id="GDPC1",
+        sanitized_parameters={},
+        body={},
+        started_at=now,
+        finished_at=now,
+        status_code=200,
+        attempt_count=1,
+        response_hash="f" * 64,
+        response_path=None,
+        from_cache=False,
+    )
+    discovery = validate_change_index_pages(
+        [
+            (
+                FredVintageDatePage(
+                    count=len(change_dates),
+                    offset=0,
+                    limit=10_000,
+                    vintage_dates=change_dates,
+                ),
+                payload,
+            )
+        ],
+        coverage_start=date(1776, 7, 4),
+        coverage_end=complete_through,
+        source_registry_hash=registry.registry_hash,
+        materialization=materialization,
+        indicator_id="US_REAL_GDP",
+        provider_series_id="GDPC1",
+    )
+    persist_change_index_generation(
+        session,
+        indicator_id="US_REAL_GDP",
+        provider_series_id="GDPC1",
+        discovery=discovery,
+        source_registry_hash=registry.registry_hash,
+        materialization=materialization,
+        discovered_at=now,
     )
 
 
@@ -142,7 +229,7 @@ async def test_arbitrary_non_allowlisted_dates_resolve_for_live_gate_families(
 
 
 @pytest.mark.asyncio
-async def test_local_exact_snapshot_hit_never_calls_transport(
+async def test_legacy_exact_snapshot_is_not_a_production_fallback(
     postgres_session: Session, settings: Settings, tmp_path: Path
 ) -> None:
     registry = _seed(postgres_session)
@@ -163,21 +250,30 @@ async def test_local_exact_snapshot_hit_never_calls_transport(
     )
     postgres_session.flush()
 
+    calls = 0
+
     def handler(_: httpx.Request) -> httpx.Response:
-        raise AssertionError("local PIT hit must not call ALFRED")
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
 
     async with _client(tmp_path, httpx.MockTransport(handler)) as client:
-        rows = await get_effective_observations_on_demand(
-            postgres_session,
-            "US_REAL_GDP",
-            date(2020, 1, 1),
-            date(2020, 1, 1),
-            as_of,
-            registry=registry,
-            settings=settings,
-            client=client,
-        )
-    assert [row.value for row in rows] == [Decimal("19000")]
+        with pytest.raises(PITSnapshotFetchFailed):
+            await get_effective_observations_on_demand(
+                postgres_session,
+                "US_REAL_GDP",
+                date(2020, 1, 1),
+                date(2020, 1, 1),
+                as_of,
+                registry=registry,
+                settings=settings,
+                client=client,
+            )
+    assert calls == 1
+    legacy = postgres_session.scalar(
+        select(ObservationVintage).where(ObservationVintage.release_stage == "as_known_on")
+    )
+    assert legacy is not None and legacy.current_value == Decimal("19000")
 
 
 @pytest.mark.asyncio
@@ -474,7 +570,7 @@ async def test_malformed_or_empty_business_response_fails_closed(
     assert alfred.runtime_health is (
         RuntimeHealth.HEALTHY
         if expected is PITAvailabilityStatus.EMPTY_INFORMATION_SET
-        else RuntimeHealth.UNAVAILABLE
+        else RuntimeHealth.DEGRADED
     )
 
 
@@ -544,7 +640,7 @@ async def test_http_failures_never_fall_back_to_current_snapshot(
         ([], date(1940, 1, 1), PITAvailabilityStatus.NO_VINTAGE),
     ],
 )
-async def test_http_400_uses_official_coverage_evidence_for_expected_unavailability(
+async def test_complete_index_proves_expected_unavailability_without_observation_request(
     postgres_session: Session,
     settings: Settings,
     tmp_path: Path,
@@ -553,53 +649,25 @@ async def test_http_400_uses_official_coverage_evidence_for_expected_unavailabil
     expected: PITAvailabilityStatus,
 ) -> None:
     registry = _seed(postgres_session)
-    calls: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request.url.path)
-        if request.url.path.endswith("series/vintagedates"):
-            return httpx.Response(200, json={"vintage_dates": vintage_dates})
-        return httpx.Response(400)
-
-    async with _client(tmp_path, httpx.MockTransport(handler), cache_enabled=False) as client:
-        for _ in range(2):
-            with pytest.raises(PITSnapshotFetchFailed) as captured:
-                await get_effective_observations_on_demand(
-                    postgres_session,
-                    "US_REAL_GDP",
-                    date(1940, 1, 1),
-                    date(1940, 1, 1),
-                    as_of,
-                    registry=registry,
-                    settings=settings,
-                    client=client,
-                )
-            assert captured.value.availability_status is expected
-
-    events = postgres_session.scalars(
-        select(DataQualityEvent).where(DataQualityEvent.event_type == "pit_availability_failure")
-    ).all()
-    assert len(events) == 1
-    assert events[0].details_json == {
-        "quality_scope": QualityScope.PIT_AVAILABILITY.value,
-        "runtime_domain": RuntimeDomain.ALFRED_VINTAGE.value,
-        "as_of": as_of.isoformat(),
-        "pit_availability_status": expected.value,
-        "safe_error_category": "COVERAGE",
-        "http_status": 400,
-        "runtime_blocking": False,
-        "classification_version": "dlcr-002-v1",
-    }
-    assert calls.count("/fred/series/observations") == 2
-    assert calls.count("/fred/series/vintagedates") == 2
-    assert (
-        provider_health(
-            postgres_session,
-            "fred",
-            runtime_domain=RuntimeDomain.ALFRED_VINTAGE,
-        ).runtime_health
-        is RuntimeHealth.HEALTHY
+    _persist_complete_index(
+        postgres_session,
+        registry,
+        change_dates=[date.fromisoformat(item) for item in vintage_dates],
+        complete_through=date(2020, 12, 31),
     )
+    error = (
+        PITOutsideCoverage if expected is PITAvailabilityStatus.OUTSIDE_COVERAGE else PITNoVintage
+    )
+    for _ in range(2):
+        with pytest.raises(error):
+            get_effective_observations(
+                postgres_session,
+                "US_REAL_GDP",
+                date(1940, 1, 1),
+                date(1940, 1, 1),
+                as_of,
+                registry=registry,
+            )
 
 
 @pytest.mark.asyncio
@@ -778,7 +846,7 @@ async def test_canonical_provenance_includes_frozen_registry_identity(
     assert row.source_policy_version == "stage2b5-v3"
     assert row.vintage_source == "ALFRED_VINTAGE"
     assert row.vintage_as_of == date(2020, 7, 19)
-    assert row.resolution_reason == "ALFRED_AS_OF_DATE"
+    assert row.resolution_reason == "ALFRED_SEMANTIC_INFORMATION_SET"
     assert row.source_used == "fred"
     assert not row.is_fallback
 
@@ -803,7 +871,9 @@ async def test_request_audit_and_public_errors_are_secret_free(
             settings=settings,
             client=client,
         )
-    request = postgres_session.scalar(select(DataSourceRequest))
+    request = postgres_session.scalar(
+        select(DataSourceRequest).where(DataSourceRequest.endpoint == "series/observations")
+    )
     run = postgres_session.scalar(select(SyncRun))
     assert request is not None and run is not None
     evidence = json.dumps(
@@ -871,23 +941,12 @@ async def test_existing_snapshot_can_legitimately_return_empty_requested_range(
 ) -> None:
     registry = _seed(postgres_session)
     as_of = date(2020, 7, 19)
-    postgres_session.add(
-        ObservationVintage(
-            indicator_id="US_REAL_GDP",
-            observation_date=date(2020, 1, 1),
-            vintage_date=as_of,
-            release_stage="as_known_on",
-            revision_number=1,
-            current_value=Decimal("100"),
-            source="fred",
-            source_vintage_date=as_of,
-            raw_payload_hash="c" * 64,
-        )
-    )
-    postgres_session.flush()
+    calls = 0
 
-    def handler(_: httpx.Request) -> httpx.Response:
-        raise AssertionError("complete local snapshot must satisfy an empty subrange")
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _response(request, value="100")
 
     async with _client(tmp_path, httpx.MockTransport(handler)) as client:
         rows = await get_effective_observations_on_demand(
@@ -901,14 +960,31 @@ async def test_existing_snapshot_can_legitimately_return_empty_requested_range(
             client=client,
         )
     assert rows == []
+    assert calls == 1
+
+    def reject(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("semantic information-set hit must remain local")
+
+    async with _client(tmp_path, httpx.MockTransport(reject)) as client:
+        repeated = await get_effective_observations_on_demand(
+            postgres_session,
+            "US_REAL_GDP",
+            date(2019, 1, 1),
+            date(2019, 12, 31),
+            as_of,
+            registry=registry,
+            settings=settings,
+            client=client,
+        )
+    assert repeated == []
 
 
-def test_sync_reader_accepts_arbitrary_date_only_after_exact_snapshot_exists(
+def test_sync_reader_requires_a_complete_change_index(
     postgres_session: Session,
 ) -> None:
     registry = _seed(postgres_session)
     arbitrary = date(2020, 7, 19)
-    with pytest.raises(PITSnapshotNotCached):
+    with pytest.raises(PITChangeIndexUnavailable):
         get_effective_observations(
             postgres_session,
             "US_CPI",

@@ -92,3 +92,9 @@ class FredPage(BaseModel):
     count: int = 0
     offset: int = 0
     limit: int = Field(default=1000, gt=0)
+
+
+class FredVintageDatePage(FredPage):
+    """One typed page from ``fred/series/vintagedates``."""
+
+    vintage_dates: list[date]

@@ -1,5 +1,6 @@
 """PostgreSQL integration tests for Stage 3A-to-Stage 3B signal flow."""
 
+import hashlib
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -8,10 +9,11 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.data_sources.fred.schemas import FredObservation
 from app.database.models import (
     DataSourceRequest,
     DerivedFeature,
-    ObservationVintage,
+    IndicatorRegistry,
     RawObservation,
 )
 from app.indicators.config import load_indicator_catalog
@@ -19,6 +21,9 @@ from app.indicators.service import seed_indicator_catalog
 from app.signals.schemas import SignalQualityFlag, SignalStatus
 from app.signals.service import SignalEngine, compute_feature_signals
 from app.source_registry.config import load_source_registry
+from app.source_registry.information_sets import persist_information_set
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.pit_index import ChangeIndexDiscovery, persist_change_index_generation
 
 pytestmark = pytest.mark.integration
 
@@ -74,32 +79,61 @@ def _pit_monthly(
     revised_history_value: Decimal | None = None,
 ) -> list[date]:
     dates: list[date] = []
+    observations: list[FredObservation] = []
     for index in range(count):
         observation_date = start + relativedelta(months=index)
         dates.append(observation_date)
         value = Decimal(index)
         if revised_history_value is not None and index == count - 2:
             value = revised_history_value
-        session.add(
-            ObservationVintage(
-                indicator_id="US_SAVING_RATE",
-                observation_date=observation_date,
-                vintage_date=as_of,
-                release_date=observation_date,
-                available_at=datetime(as_of.year, as_of.month, as_of.day, 23, 59, tzinfo=UTC),
-                release_stage="as_known_on",
-                revision_number=1,
-                current_value=value,
-                source="fred",
-                source_vintage_date=as_of,
-                retrieved_at=datetime(2026, 8, 27, tzinfo=UTC),
-                raw_payload_hash=(f"pit:{as_of}:{observation_date}:{value}")
-                .encode()
-                .hex()[:64]
-                .ljust(64, "0"),
-                source_details_json={"information_set_semantics": "END_OF_DAY"},
+        observations.append(
+            FredObservation(
+                realtime_start=as_of,
+                realtime_end=as_of,
+                date=observation_date,
+                value=value,
             )
         )
+    registry = load_source_registry()
+    materialization = load_pit_materialization_catalog(source_registry=registry)
+    indicator = session.scalar(
+        select(IndicatorRegistry).where(IndicatorRegistry.indicator_id == "US_SAVING_RATE")
+    )
+    assert indicator is not None and indicator.fred_series_id is not None
+    generation = persist_change_index_generation(
+        session,
+        indicator_id="US_SAVING_RATE",
+        provider_series_id=indicator.fred_series_id,
+        discovery=ChangeIndexDiscovery(
+            coverage_start=as_of,
+            coverage_end=as_of,
+            complete_through=as_of,
+            change_dates=(as_of,),
+            provider_count=1,
+            pages=(),
+            generation_hash=hashlib.sha256(f"signal-index:{as_of}".encode()).hexdigest(),
+        ),
+        source_registry_hash=registry.registry_hash,
+        materialization=materialization,
+        discovered_at=datetime(2026, 8, 27, tzinfo=UTC),
+    )
+    policy = registry.by_indicator()["US_SAVING_RATE"]
+    persist_information_set(
+        session,
+        indicator_id="US_SAVING_RATE",
+        provider_series_id=indicator.fred_series_id,
+        source_information_set_date=as_of,
+        unit=policy.canonical.unit,
+        frequency=policy.canonical.frequency,
+        observations=observations,
+        raw_payload_hash=hashlib.sha256(
+            f"signal-payload:{as_of}:{revised_history_value}".encode()
+        ).hexdigest(),
+        retrieved_at=datetime(2026, 8, 27, tzinfo=UTC),
+        generation=generation,
+        source_registry_hash=registry.registry_hash,
+        materialization=materialization,
+    )
     return dates
 
 
@@ -130,7 +164,7 @@ async def test_current_signal_consumes_real_stage3a_feature_engine(
         (date(2022, 7, 3), date(2017, 6, 1)),
     ],
 )
-async def test_crisis_episode_fixture_pit_uses_one_exact_information_set(
+async def test_crisis_episode_fixture_pit_uses_one_semantic_information_set(
     postgres_session: Session,
     as_of: date,
     start: date,

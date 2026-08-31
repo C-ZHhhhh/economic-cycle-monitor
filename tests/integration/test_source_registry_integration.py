@@ -42,9 +42,10 @@ from app.source_registry.health import (
 )
 from app.source_registry.readiness import validate_data_layer
 from app.source_registry.resolver import (
-    PITSnapshotNotCached,
+    PITChangeIndexUnavailable,
     SourceIntegrityError,
     get_effective_observations,
+    resolve_pit_exact_baseline,
 )
 from app.source_registry.schemas import RuntimeHealth, SourceRegistryCatalog
 
@@ -452,11 +453,11 @@ def test_value_conflict_fails_closed_instead_of_falling_back(
         )
 
 
-def test_uncached_alfred_date_requires_on_demand_materialization(
+def test_uncached_semantic_date_requires_change_index_materialization(
     postgres_session: Session,
 ) -> None:
     registry = _seed_all(postgres_session)
-    with pytest.raises(PITSnapshotNotCached, match="PIT_SNAPSHOT_NOT_CACHED"):
+    with pytest.raises(PITChangeIndexUnavailable, match="PIT_CHANGE_INDEX_UNAVAILABLE"):
         get_effective_observations(
             postgres_session,
             "US_CPI",
@@ -467,7 +468,7 @@ def test_uncached_alfred_date_requires_on_demand_materialization(
         )
 
 
-def test_validated_gdp_date_uses_only_alfred_vintages_visible_as_of_date(
+def test_explicit_legacy_comparator_uses_only_vintages_visible_as_of_date(
     postgres_session: Session,
 ) -> None:
     registry = _seed_all(postgres_session)
@@ -487,13 +488,18 @@ def test_validated_gdp_date_uses_only_alfred_vintages_visible_as_of_date(
         )
     )
     postgres_session.flush()
-    rows = get_effective_observations(
+    indicator = postgres_session.scalar(
+        select(IndicatorRegistry).where(IndicatorRegistry.indicator_id == "US_REAL_GDP")
+    )
+    assert indicator is not None
+    rows = resolve_pit_exact_baseline(
         postgres_session,
-        "US_REAL_GDP",
-        date(2020, 1, 1),
-        date(2020, 1, 1),
-        date(2020, 6, 30),
-        registry=registry,
+        registry.by_indicator()["US_REAL_GDP"],
+        indicator,
+        start=date(2020, 1, 1),
+        end=date(2020, 1, 1),
+        as_of=date(2020, 6, 30),
+        registry_hash=registry.registry_hash,
     )
     assert len(rows) == 1
     assert rows[0].vintage_as_of == date(2020, 6, 30)
@@ -503,6 +509,7 @@ def test_validated_gdp_date_uses_only_alfred_vintages_visible_as_of_date(
 
 def test_current_and_pit_readiness_pass_after_all_live_gates(
     postgres_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = _seed_all(postgres_session)
     today = date(2024, 6, 15)
@@ -524,6 +531,28 @@ def test_current_and_pit_readiness_pass_after_all_live_gates(
     assert readiness.pit_runtime_ready
     assert readiness.pit_backtest_ready
     assert readiness.pit_blockers == []
+
+    def invalid_materialization_authority(**_kwargs: object) -> None:
+        raise ValueError("test-invalid-pit-materialization-authority")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            "app.source_registry.readiness.load_pit_materialization_catalog",
+            invalid_materialization_authority,
+        )
+        authority_blocked = validate_data_layer(
+            postgres_session,
+            registry=registry,
+            today=today,
+        )
+    assert authority_blocked.current_data_ready
+    assert authority_blocked.current_blockers == []
+    assert not authority_blocked.pit_contract_ready
+    assert authority_blocked.pit_runtime_ready
+    assert not authority_blocked.pit_backtest_ready
+    assert authority_blocked.pit_contract_blockers == [
+        "PIT_MATERIALIZATION_AUTHORITY_INVALID:ValueError"
+    ]
 
     persist_quality_issues(
         postgres_session,

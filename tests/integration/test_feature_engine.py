@@ -1,5 +1,6 @@
 """PostgreSQL integration tests for canonical current and arbitrary-date PIT features."""
 
+import hashlib
 import inspect
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -8,8 +9,10 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.data_sources.fred.schemas import FredObservation
 from app.database.models import (
     DataSourceRequest,
+    IndicatorRegistry,
     ObservationVintage,
     RawObservation,
 )
@@ -23,6 +26,9 @@ from app.features.service import (
 from app.indicators.config import load_indicator_catalog
 from app.indicators.service import seed_indicator_catalog
 from app.source_registry.config import load_source_registry
+from app.source_registry.information_sets import persist_information_set
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.pit_index import ChangeIndexDiscovery, persist_change_index_generation
 
 pytestmark = pytest.mark.integration
 
@@ -78,27 +84,56 @@ def _pit_snapshot(
     as_of: date,
     values: list[tuple[date, str]],
 ) -> None:
-    for revision_number, (observation_date, value) in enumerate(values, start=1):
-        session.add(
-            ObservationVintage(
-                indicator_id=indicator_id,
-                observation_date=observation_date,
-                vintage_date=as_of,
-                release_date=observation_date,
-                available_at=datetime(as_of.year, as_of.month, as_of.day, 23, 59, tzinfo=UTC),
-                release_stage="as_known_on",
-                revision_number=revision_number,
-                current_value=Decimal(value),
-                source="fred",
-                source_vintage_date=as_of,
-                retrieved_at=datetime(2026, 8, 26, tzinfo=UTC),
-                raw_payload_hash=(indicator_id + as_of.isoformat() + str(revision_number))
-                .encode()
-                .hex()[:64]
-                .ljust(64, "0"),
-                source_details_json={"information_set_semantics": "END_OF_DAY"},
-            )
+    registry = load_source_registry()
+    materialization = load_pit_materialization_catalog(source_registry=registry)
+    indicator = session.scalar(
+        select(IndicatorRegistry).where(IndicatorRegistry.indicator_id == indicator_id)
+    )
+    assert indicator is not None and indicator.fred_series_id is not None
+    generation_hash = hashlib.sha256(f"fixture-index:{indicator_id}:{as_of}".encode()).hexdigest()
+    generation = persist_change_index_generation(
+        session,
+        indicator_id=indicator_id,
+        provider_series_id=indicator.fred_series_id,
+        discovery=ChangeIndexDiscovery(
+            coverage_start=as_of,
+            coverage_end=as_of,
+            complete_through=as_of,
+            change_dates=(as_of,),
+            provider_count=1,
+            pages=(),
+            generation_hash=generation_hash,
+        ),
+        source_registry_hash=registry.registry_hash,
+        materialization=materialization,
+        discovered_at=datetime(2026, 8, 26, tzinfo=UTC),
+    )
+    policy = registry.by_indicator()[indicator_id]
+    observations = [
+        FredObservation(
+            realtime_start=as_of,
+            realtime_end=as_of,
+            date=observation_date,
+            value=Decimal(value),
         )
+        for observation_date, value in values
+    ]
+    persist_information_set(
+        session,
+        indicator_id=indicator_id,
+        provider_series_id=indicator.fred_series_id,
+        source_information_set_date=as_of,
+        unit=policy.canonical.unit,
+        frequency=policy.canonical.frequency,
+        observations=observations,
+        raw_payload_hash=hashlib.sha256(
+            f"fixture-payload:{indicator_id}:{as_of}:{values}".encode()
+        ).hexdigest(),
+        retrieved_at=datetime(2026, 8, 26, tzinfo=UTC),
+        generation=generation,
+        source_registry_hash=registry.registry_hash,
+        materialization=materialization,
+    )
 
 
 def _monthly_values(final: str = "103") -> list[tuple[date, str]]:
@@ -133,7 +168,7 @@ async def test_public_current_feature_reads_only_canonical_resolver(
 
 
 @pytest.mark.asyncio
-async def test_arbitrary_non_allowlisted_weekend_pit_feature_uses_dlcr_exact_snapshot(
+async def test_arbitrary_non_allowlisted_weekend_pit_feature_uses_semantic_information_set(
     postgres_session: Session,
 ) -> None:
     _seed(postgres_session)
