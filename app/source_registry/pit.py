@@ -428,6 +428,27 @@ async def _resolve_with_client(
             registry=registry,
             materialization=materialization,
         )
+    except PITInformationSetNotCached as error:
+        await _materialize_information_set(
+            session,
+            client,
+            indicator_id=indicator_id,
+            source_date=error.source_information_set_date,
+            evaluation_as_of=as_of,
+            registry=registry,
+            materialization=materialization,
+        )
+        return get_effective_observations(
+            session,
+            indicator_id,
+            start,
+            end,
+            as_of,
+            registry=registry,
+            materialization=materialization,
+            today=today,
+            evaluated_at=evaluated_at,
+        )
     except (PITOutsideCoverage, PITNoVintage):
         raise
     try:
