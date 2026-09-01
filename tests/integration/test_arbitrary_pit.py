@@ -323,6 +323,57 @@ async def test_local_miss_fetches_once_and_repeat_is_database_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_complete_index_with_uncached_information_set_materializes_on_demand(
+    postgres_session: Session, settings: Settings, tmp_path: Path
+) -> None:
+    """A reusable index must not turn a semantic information-set miss into an error."""
+    registry = _seed(postgres_session)
+    _persist_complete_index(
+        postgres_session,
+        registry,
+        change_dates=[date(2020, 6, 28), date(2020, 7, 19)],
+        complete_through=date(2020, 7, 19),
+    )
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        assert request.url.path.endswith("series/observations")
+        assert request.url.params["realtime_start"] == "2020-06-28"
+        return _response(request)
+
+    async with _client(
+        tmp_path,
+        httpx.MockTransport(handler),
+        auto_index=False,
+    ) as client:
+        rows = await get_effective_observations_on_demand(
+            postgres_session,
+            "US_REAL_GDP",
+            date(2020, 1, 1),
+            date(2020, 1, 1),
+            date(2020, 7, 18),
+            registry=registry,
+            settings=settings,
+            client=client,
+        )
+        repeated = await get_effective_observations_on_demand(
+            postgres_session,
+            "US_REAL_GDP",
+            date(2020, 1, 1),
+            date(2020, 1, 1),
+            date(2020, 7, 18),
+            registry=registry,
+            settings=settings,
+            client=client,
+        )
+
+    assert calls == ["/fred/series/observations"]
+    assert rows == repeated
+    assert rows[0].source_information_set_date == date(2020, 6, 28)
+
+
+@pytest.mark.asyncio
 async def test_same_date_revision_row_does_not_masquerade_as_exact_snapshot(
     postgres_session: Session, settings: Settings, tmp_path: Path
 ) -> None:
