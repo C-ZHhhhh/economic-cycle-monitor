@@ -30,6 +30,11 @@ from app.signals.schemas import (
     SignalQualityFlag,
     SignalStatus,
 )
+from app.source_registry.revision_provenance import (
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionEffectType
 
 SIGNALS = load_signal_catalog()
 PILLARS = load_pillar_catalog(signal_catalog=SIGNALS)
@@ -74,10 +79,29 @@ def _row(
     normalization_hash: str | None = None,
     flags: list[SignalQualityFlag] | None = None,
     revision: int = 0,
+    counterfactual_directed: Decimal | None | object = ...,
 ) -> NormalizedSignalResult:
     definition = SIGNALS.by_signal()[signal_id]
     safe = as_of is not None if pit_safe is None else pit_safe
     value = directed if status is SignalStatus.OK else None
+    revision_effect = None
+    if counterfactual_directed is not ...:
+        authority = load_revision_provenance_catalog()
+        prior_value = (
+            counterfactual_directed if isinstance(counterfactual_directed, Decimal) else None
+        )
+        revision_effect = build_layer_effect(
+            authority=authority,
+            source_evidence_hashes=("e" * 64,),
+            source_effect_types=(RevisionEffectType.SOURCE_REVISION,),
+            current_value=value,
+            counterfactual_value=prior_value,
+            current_status=status.value,
+            counterfactual_status=status.value,
+        )
+    quality_flags = list(flags or [])
+    if revision_effect is not None and revision_effect.result_changed:
+        quality_flags.append(SignalQualityFlag.REVISION_CHANGED_RESULT)
     return NormalizedSignalResult(
         signal_id=signal_id,
         feature_id=definition.feature_id,
@@ -115,8 +139,18 @@ def _row(
         history_feature_calculation_hash=f"history:{signal_id}:{revision}",
         is_point_in_time_safe=safe,
         signal_status=status,
-        quality_flags=flags or [],
+        quality_flags=quality_flags,
         calculation_hash=f"signal:{signal_id}:{observation_date}:{as_of}:{directed}:{revision}",
+        revision_provenance_version=(
+            revision_effect.revision_provenance_version if revision_effect else None
+        ),
+        revision_provenance_hash=(
+            revision_effect.revision_provenance_hash if revision_effect else None
+        ),
+        revision_evidence_hashes=revision_effect.source_revision_evidence_hashes
+        if revision_effect
+        else (),
+        revision_effect=revision_effect,
     )
 
 
@@ -127,9 +161,11 @@ def _primary_rows(
     observation_date: date = date(2026, 8, 1),
     as_of: date | None = None,
     revision: int = 0,
+    counterfactual_values: Sequence[Decimal | None | object] | None = None,
 ) -> list[NormalizedSignalResult]:
     signal_ids = PILLARS.by_pillar()[pillar_id].primary_signal_ids
     assert len(signal_ids) == len(values)
+    prior_values = counterfactual_values or [...] * len(values)
     return [
         _row(
             signal_id,
@@ -137,8 +173,9 @@ def _primary_rows(
             observation_date=observation_date,
             as_of=as_of,
             revision=revision,
+            counterfactual_directed=counterfactual,
         )
-        for signal_id, value in zip(signal_ids, values, strict=True)
+        for signal_id, value, counterfactual in zip(signal_ids, values, prior_values, strict=True)
     ]
 
 
@@ -435,6 +472,7 @@ async def test_revision_changes_pillar_value_and_hash_for_same_economic_period()
         observation_date=observation_date,
         as_of=second_as_of,
         revision=1,
+        counterfactual_values=[Decimal(1), ..., ..., ...],
     )
     second = await engine.compute_pillar(ACTIVITY, second_as_of)
     assert first.value != second.value
@@ -479,6 +517,9 @@ async def test_all_nine_pillars_compute_without_a_composite() -> None:
     ]
     results = await _engine(rows)[0].compute_all_pillars()
     assert len(results) == 9
+    assert all(item.revision_provenance_version is None for item in results)
+    assert all(item.revision_provenance_hash is None for item in results)
+    assert all(item.revision_effect is None for item in results)
     assert {item.pillar_id for item in results} == set(PILLARS.by_pillar())
     assert all(item.value == Decimal(0) for item in results)
 

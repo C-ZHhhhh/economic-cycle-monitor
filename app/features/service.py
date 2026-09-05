@@ -22,8 +22,20 @@ from app.features.schemas import (
     QualityFlag,
 )
 from app.source_registry.config import load_source_registry
+from app.source_registry.materialization import load_pit_materialization_catalog
 from app.source_registry.pit import get_effective_observations_on_demand
 from app.source_registry.resolver import PITGranularityUnsupported
+from app.source_registry.revision_provenance import (
+    RevisionProvenanceCatalog,
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import (
+    CanonicalObservationStatus,
+    ObservationSetRevisionEnvelope,
+    RevisionEffectType,
+    RevisionLayerEffect,
+)
 from app.source_registry.schemas import EffectiveObservation, RuntimeHealth, SourceRegistryCatalog
 
 CanonicalResolver = Callable[..., Awaitable[list[EffectiveObservation]]]
@@ -80,6 +92,11 @@ def _observation_payload(item: EffectiveObservation) -> dict[str, Any]:
                 "pit_materialization_spec_version": item.pit_materialization_spec_version,
                 "pit_materialization_spec_hash": item.pit_materialization_spec_hash,
                 "evaluation_result_hash": item.evaluation_result_hash,
+                "revision_evidence_hash": (
+                    item.revision_evidence.revision_evidence_hash
+                    if item.revision_evidence is not None
+                    else None
+                ),
             }
         )
     return payload
@@ -111,6 +128,92 @@ def _quality_flags(inputs: Sequence[EffectiveObservation]) -> list[QualityFlag]:
     return sorted(flags, key=str)
 
 
+def _revision_evidence(
+    observations: Sequence[EffectiveObservation],
+) -> ObservationSetRevisionEnvelope | None:
+    """Return the one canonical envelope shared by a resolved PIT observation set."""
+    evidence = {
+        item.revision_evidence.revision_evidence_hash: item.revision_evidence
+        for item in observations
+        if item.revision_evidence is not None
+    }
+    if len(evidence) > 1:
+        raise FeatureEngineError("MIXED_REVISION_EVIDENCE")
+    return next(iter(evidence.values()), None)
+
+
+def _counterfactual_observations(
+    current: dict[date, EffectiveObservation],
+    evidence: ObservationSetRevisionEnvelope,
+    relevant_dates: set[date],
+) -> dict[date, EffectiveObservation]:
+    """Restore only canonically revised states while retaining normal new information."""
+    counterfactual = dict(current)
+    exemplar = next(iter(current.values()), None)
+    for delta in evidence.observation_deltas:
+        if delta.observation_date not in relevant_dates:
+            continue
+        if delta.effect_type is RevisionEffectType.NEW_INFORMATION:
+            continue
+        if delta.prior_status is CanonicalObservationStatus.AVAILABLE:
+            if delta.prior_value is None or exemplar is None:
+                raise FeatureEngineError("REVISION_PREDECESSOR_VALUE_REQUIRED")
+            template = current.get(delta.observation_date, exemplar)
+            counterfactual[delta.observation_date] = template.model_copy(
+                update={
+                    "observation_date": delta.observation_date,
+                    "value": delta.prior_value,
+                }
+            )
+        else:
+            counterfactual.pop(delta.observation_date, None)
+    return counterfactual
+
+
+def _feature_revision_effect(
+    *,
+    feature: FeatureDefinition,
+    policy_frequency: str,
+    target: date,
+    current_by_date: dict[date, EffectiveObservation],
+    current_status: FeatureStatus,
+    current_value: Decimal | None,
+    expected_dates: tuple[date, ...],
+    evidence: ObservationSetRevisionEnvelope | None,
+    authority: RevisionProvenanceCatalog,
+) -> RevisionLayerEffect | None:
+    """Compare one feature with its persisted-revision counterfactual."""
+    if evidence is None:
+        return None
+    relevant_dates = set(expected_dates)
+    relevant_deltas = tuple(
+        item for item in evidence.observation_deltas if item.observation_date in relevant_dates
+    )
+    source_effects = tuple(sorted({item.effect_type for item in relevant_deltas}, key=str))
+    counterfactual_status = current_status
+    counterfactual_value = current_value
+    if any(item.effect_type is not RevisionEffectType.NEW_INFORMATION for item in relevant_deltas):
+        counterfactual = _counterfactual_observations(current_by_date, evidence, relevant_dates)
+        outcome = evaluate_formula(
+            feature.formula_id,
+            window=feature.window,
+            frequency=policy_frequency,
+            target=target,
+            observations=counterfactual,
+        )
+        counterfactual_status = outcome.status
+        counterfactual_value = outcome.value if counterfactual_status is FeatureStatus.OK else None
+    return build_layer_effect(
+        authority=authority,
+        source_evidence_hashes=(evidence.revision_evidence_hash,),
+        source_effect_types=source_effects,
+        current_value=current_value,
+        counterfactual_value=counterfactual_value,
+        current_status=current_status.value,
+        counterfactual_status=counterfactual_status.value,
+    )
+
+
 class FeatureEngine:
     """Compute bounded current or PIT features through one canonical data entry."""
 
@@ -137,8 +240,10 @@ class FeatureEngine:
             raise FeatureRegistryMismatch("REGISTRY_HASH_MISMATCH")
         self.cache = cache if cache is not None else FeatureResultCache()
         self.resolver = resolver
-        self._revision_values: OrderedDict[tuple[str, date], tuple[date | None, Decimal | None]] = (
-            OrderedDict()
+        materialization = load_pit_materialization_catalog(source_registry=self.source_registry)
+        self.revision_provenance = load_revision_provenance_catalog(
+            source_registry=self.source_registry,
+            materialization=materialization,
         )
 
     async def _resolve(
@@ -161,28 +266,6 @@ class FeatureEngine:
             as_of,
             registry=self.source_registry,
         )
-
-    def _remember_revision(
-        self,
-        result: FeatureResult,
-        *,
-        max_entries: int = 512,
-    ) -> FeatureResult:
-        key = (result.feature_id, result.feature_observation_date)
-        previous = self._revision_values.get(key)
-        flags = list(result.quality_flags)
-        if (
-            previous is not None
-            and previous[1] is not None
-            and result.value is not None
-            and previous[1] != result.value
-        ):
-            flags.append(QualityFlag.REVISION_CHANGED_RESULT)
-        self._revision_values[key] = (result.as_of, result.value)
-        self._revision_values.move_to_end(key)
-        while len(self._revision_values) > max_entries:
-            self._revision_values.popitem(last=False)
-        return result.model_copy(update={"quality_flags": sorted(set(flags), key=str)})
 
     def _compute_series(
         self,
@@ -213,7 +296,22 @@ class FeatureEngine:
             ):
                 status = FeatureStatus.PIT_UNSAFE
             inputs = list(outcome.inputs)
-            payload = {
+            evidence = _revision_evidence(observations)
+            revision_effect = _feature_revision_effect(
+                feature=feature,
+                policy_frequency=policy.canonical.frequency,
+                target=target,
+                current_by_date=by_date,
+                current_status=status,
+                current_value=outcome.value if status is FeatureStatus.OK else None,
+                expected_dates=outcome.expected_dates,
+                evidence=evidence,
+                authority=self.revision_provenance,
+            )
+            quality_flags = set(_quality_flags(inputs))
+            if revision_effect is not None and revision_effect.result_changed:
+                quality_flags.add(QualityFlag.REVISION_CHANGED_RESULT)
+            payload: dict[str, object] = {
                 "feature_specification_hash": self.feature_catalog.specification_hash,
                 "feature_id": feature.feature_id,
                 "formula_id": feature.formula_id.value,
@@ -221,7 +319,20 @@ class FeatureEngine:
                 "target": target.isoformat(),
                 "as_of": as_of.isoformat() if as_of else "CURRENT",
                 "inputs": [_observation_payload(item) for item in inputs],
+                "quality_flags": sorted(item.value for item in quality_flags),
             }
+            if as_of is not None:
+                payload.update(
+                    revision_provenance_version=(
+                        self.revision_provenance.revision_provenance_version
+                    ),
+                    revision_provenance_hash=self.revision_provenance.specification_hash,
+                    revision_effect_hash=(
+                        revision_effect.revision_effect_hash
+                        if revision_effect is not None
+                        else None
+                    ),
+                )
             result = FeatureResult(
                 feature_id=feature.feature_id,
                 display_name=feature.display_name,
@@ -252,10 +363,22 @@ class FeatureEngine:
                     and all(item.is_point_in_time_safe for item in inputs)
                 ),
                 feature_status=status,
-                quality_flags=_quality_flags(inputs),
+                quality_flags=sorted(quality_flags, key=str),
                 calculation_hash=_hash_payload(payload),
+                revision_provenance_version=(
+                    self.revision_provenance.revision_provenance_version
+                    if as_of is not None
+                    else None
+                ),
+                revision_provenance_hash=(
+                    self.revision_provenance.specification_hash if as_of is not None else None
+                ),
+                revision_evidence_hash=(
+                    evidence.revision_evidence_hash if evidence is not None else None
+                ),
+                revision_effect=revision_effect,
             )
-            results.append(self._remember_revision(result))
+            results.append(result)
         return results
 
     async def _compute_indicator_selection(

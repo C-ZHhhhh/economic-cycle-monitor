@@ -83,6 +83,8 @@ def _pit_snapshot(
     indicator_id: str,
     as_of: date,
     values: list[tuple[date, str]],
+    *,
+    generation_dates: tuple[date, ...] | None = None,
 ) -> None:
     registry = load_source_registry()
     materialization = load_pit_materialization_catalog(source_registry=registry)
@@ -90,17 +92,20 @@ def _pit_snapshot(
         select(IndicatorRegistry).where(IndicatorRegistry.indicator_id == indicator_id)
     )
     assert indicator is not None and indicator.fred_series_id is not None
-    generation_hash = hashlib.sha256(f"fixture-index:{indicator_id}:{as_of}".encode()).hexdigest()
+    change_dates = generation_dates or (as_of,)
+    generation_hash = hashlib.sha256(
+        f"fixture-index:{indicator_id}:{change_dates}".encode()
+    ).hexdigest()
     generation = persist_change_index_generation(
         session,
         indicator_id=indicator_id,
         provider_series_id=indicator.fred_series_id,
         discovery=ChangeIndexDiscovery(
-            coverage_start=as_of,
-            coverage_end=as_of,
-            complete_through=as_of,
-            change_dates=(as_of,),
-            provider_count=1,
+            coverage_start=min(change_dates),
+            coverage_end=max(change_dates),
+            complete_through=max(change_dates),
+            change_dates=change_dates,
+            provider_count=len(change_dates),
             pages=(),
             generation_hash=generation_hash,
         ),
@@ -165,6 +170,9 @@ async def test_public_current_feature_reads_only_canonical_resolver(
     assert results[0].value == Decimal("4.7")
     assert results[0].input_sources == ["fred"]
     assert results[0].as_of is None
+    assert results[0].revision_provenance_version is None
+    assert results[0].revision_provenance_hash is None
+    assert results[0].revision_effect is None
 
 
 @pytest.mark.asyncio
@@ -200,8 +208,21 @@ async def test_revised_pit_snapshot_changes_feature_without_overwriting_current(
     _seed(postgres_session)
     before_as_of = date(2024, 5, 5)
     after_as_of = date(2024, 6, 2)
-    _pit_snapshot(postgres_session, "US_CPI", before_as_of, _monthly_values("103"))
-    _pit_snapshot(postgres_session, "US_CPI", after_as_of, _monthly_values("104"))
+    generation_dates = (before_as_of, after_as_of)
+    _pit_snapshot(
+        postgres_session,
+        "US_CPI",
+        before_as_of,
+        _monthly_values("103"),
+        generation_dates=generation_dates,
+    )
+    _pit_snapshot(
+        postgres_session,
+        "US_CPI",
+        after_as_of,
+        _monthly_values("104"),
+        generation_dates=generation_dates,
+    )
     _current(postgres_session, "US_CPI", date(2024, 4, 1), "105", source="bls")
     postgres_session.flush()
     engine = FeatureEngine(postgres_session)

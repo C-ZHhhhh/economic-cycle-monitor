@@ -77,6 +77,7 @@ def _pit_monthly(
     start: date,
     count: int,
     revised_history_value: Decimal | None = None,
+    generation_dates: tuple[date, ...] | None = None,
 ) -> list[date]:
     dates: list[date] = []
     observations: list[FredObservation] = []
@@ -100,18 +101,19 @@ def _pit_monthly(
         select(IndicatorRegistry).where(IndicatorRegistry.indicator_id == "US_SAVING_RATE")
     )
     assert indicator is not None and indicator.fred_series_id is not None
+    change_dates = generation_dates or (as_of,)
     generation = persist_change_index_generation(
         session,
         indicator_id="US_SAVING_RATE",
         provider_series_id=indicator.fred_series_id,
         discovery=ChangeIndexDiscovery(
-            coverage_start=as_of,
-            coverage_end=as_of,
-            complete_through=as_of,
-            change_dates=(as_of,),
-            provider_count=1,
+            coverage_start=min(change_dates),
+            coverage_end=max(change_dates),
+            complete_through=max(change_dates),
+            change_dates=change_dates,
+            provider_count=len(change_dates),
             pages=(),
-            generation_hash=hashlib.sha256(f"signal-index:{as_of}".encode()).hexdigest(),
+            generation_hash=hashlib.sha256(f"signal-index:{change_dates}".encode()).hexdigest(),
         ),
         source_registry_hash=registry.registry_hash,
         materialization=materialization,
@@ -193,13 +195,21 @@ async def test_pit_revision_changes_raw_distribution_and_signal(
     before_as_of = date(2020, 5, 3)
     after_as_of = date(2020, 6, 7)
     start = date(2015, 4, 1)
-    dates = _pit_monthly(postgres_session, as_of=before_as_of, start=start, count=61)
+    generation_dates = (before_as_of, after_as_of)
+    dates = _pit_monthly(
+        postgres_session,
+        as_of=before_as_of,
+        start=start,
+        count=61,
+        generation_dates=generation_dates,
+    )
     _pit_monthly(
         postgres_session,
         as_of=after_as_of,
         start=start,
         count=61,
         revised_history_value=Decimal(500),
+        generation_dates=generation_dates,
     )
     postgres_session.flush()
     engine = SignalEngine(postgres_session)

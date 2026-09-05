@@ -19,6 +19,15 @@ from app.features.service import (
 )
 from app.source_registry.config import load_source_registry
 from app.source_registry.resolver import PITGranularityUnsupported, SourceIntegrityError
+from app.source_registry.revision_provenance import load_revision_provenance_catalog
+from app.source_registry.revision_schemas import (
+    CanonicalObservationStatus,
+    ObservationRevisionDelta,
+    ObservationSetRevisionEnvelope,
+    RevisionEffectType,
+    RevisionEvidenceStatus,
+    RevisionPredecessorKind,
+)
 from app.source_registry.schemas import EffectiveObservation, MappingQuality, RuntimeHealth
 
 
@@ -42,6 +51,7 @@ def _observation(
     fallback: bool = False,
     health: RuntimeHealth = RuntimeHealth.HEALTHY,
     release_date: date | None | object = ...,
+    revision_evidence: ObservationSetRevisionEnvelope | None = None,
 ) -> EffectiveObservation:
     actual_release = observation_date if release_date is ... else cast(date | None, release_date)
     return EffectiveObservation(
@@ -65,6 +75,8 @@ def _observation(
         vintage_as_of=as_of,
         vintage_source="ALFRED_VINTAGE" if as_of else None,
         is_point_in_time_safe=(as_of is not None if safe is None else safe),
+        evaluation_as_of=as_of,
+        revision_evidence=revision_evidence,
     )
 
 
@@ -102,13 +114,85 @@ def _cpi_series(
     as_of: date | None = None,
     safe: bool | None = None,
     final: str = "103",
+    revision_evidence: ObservationSetRevisionEnvelope | None = None,
 ) -> list[EffectiveObservation]:
     dates = _monthly_dates(date(2023, 4, 1), 13)
     values = [str(100 + Decimal(offset) / Decimal(4)) for offset in range(12)] + [final]
     return [
-        _observation("US_CPI", item, value, as_of=as_of, safe=safe)
+        _observation(
+            "US_CPI",
+            item,
+            value,
+            as_of=as_of,
+            safe=safe,
+            revision_evidence=revision_evidence,
+        )
         for item, value in zip(dates, values, strict=True)
     ]
+
+
+def _revision_envelope(
+    *,
+    effect: RevisionEffectType,
+    observation_date: date = date(2024, 4, 1),
+    prior_value: str | None = "103",
+    current_value: str | None = "104",
+) -> ObservationSetRevisionEnvelope:
+    authority = load_revision_provenance_catalog()
+    prior_status = (
+        CanonicalObservationStatus.AVAILABLE
+        if prior_value is not None
+        else CanonicalObservationStatus.MISSING
+    )
+    current_status = (
+        CanonicalObservationStatus.AVAILABLE
+        if current_value is not None
+        else CanonicalObservationStatus.MISSING
+    )
+    delta = ObservationRevisionDelta(
+        observation_date=observation_date,
+        prior_status=prior_status,
+        current_status=current_status,
+        prior_value=Decimal(prior_value) if prior_value is not None else None,
+        current_value=Decimal(current_value) if current_value is not None else None,
+        effect_type=effect,
+    )
+    return ObservationSetRevisionEnvelope(
+        revision_provenance_version=authority.revision_provenance_version,
+        revision_provenance_hash=authority.specification_hash,
+        indicator_id="US_CPI",
+        provider="ALFRED_VINTAGE",
+        provider_series_id="CPIAUCSL",
+        index_generation_hash="a" * 64,
+        current_information_set_hash="b" * 64,
+        predecessor_information_set_hash="c" * 64,
+        current_source_information_set_date=date(2024, 5, 15),
+        predecessor_source_information_set_date=date(2024, 4, 15),
+        predecessor_kind=RevisionPredecessorKind.PREVIOUS_CHANGE_DATE,
+        current_observation_count=13,
+        predecessor_observation_count=13,
+        added_observation_dates=(observation_date,)
+        if effect is RevisionEffectType.NEW_INFORMATION
+        else (),
+        removed_observation_dates=(observation_date,)
+        if effect is RevisionEffectType.OBSERVATION_REMOVAL
+        else (),
+        revised_value_dates=(observation_date,)
+        if effect is RevisionEffectType.SOURCE_REVISION
+        else (),
+        status_changed_dates=(observation_date,)
+        if effect is RevisionEffectType.OBSERVATION_STATUS_CHANGE
+        else (),
+        observation_deltas=(delta,),
+        canonical_semantic_diff_hash="d" * 64,
+        effect_types=(effect,),
+        evidence_status=(
+            RevisionEvidenceStatus.NO_REVISION_DETECTED
+            if effect is RevisionEffectType.NEW_INFORMATION
+            else RevisionEvidenceStatus.REVISION_DETECTED
+        ),
+        revision_evidence_hash="e" * 64,
+    )
 
 
 def test_current_input_hash_ignores_dlcr003_pit_provenance_fields() -> None:
@@ -221,7 +305,7 @@ async def test_future_observation_is_not_materialized_as_a_feature_target() -> N
 
 
 @pytest.mark.asyncio
-async def test_revision_changes_input_hash_value_and_sets_revision_flag() -> None:
+async def test_process_local_value_change_does_not_set_canonical_revision_flag() -> None:
     first = _cpi_series(final="103")
     revised = _cpi_series(final="104")
     calls = 0
@@ -241,8 +325,64 @@ async def test_revision_changes_input_hash_value_and_sets_revision_flag() -> Non
     )
     assert before[0].value != after[0].value
     assert before[0].calculation_hash != after[0].calculation_hash
-    assert QualityFlag.REVISION_CHANGED_RESULT in after[0].quality_flags
+    assert QualityFlag.REVISION_CHANGED_RESULT not in after[0].quality_flags
     assert len(cache) == 2
+
+
+@pytest.mark.asyncio
+async def test_persisted_source_revision_sets_deterministic_result_flag_and_hash() -> None:
+    as_of = date(2024, 5, 15)
+    evidence = _revision_envelope(effect=RevisionEffectType.SOURCE_REVISION)
+    rows = _cpi_series(as_of=as_of, final="104", revision_evidence=evidence)
+    resolver = FakeResolver({as_of: rows})
+
+    first = (
+        await FeatureEngine(cast(Session, None), resolver=resolver).compute_feature(
+            "US_CPI__INFLATION_3M_ANNUALIZED",
+            date(2024, 4, 1),
+            date(2024, 4, 1),
+            as_of,
+        )
+    )[0]
+    second = (
+        await FeatureEngine(cast(Session, None), resolver=resolver).compute_feature(
+            "US_CPI__INFLATION_3M_ANNUALIZED",
+            date(2024, 4, 1),
+            date(2024, 4, 1),
+            as_of,
+        )
+    )[0]
+
+    assert first == second
+    assert QualityFlag.REVISION_CHANGED_RESULT in first.quality_flags
+    assert first.revision_effect is not None and first.revision_effect.result_changed
+    assert first.revision_effect.counterfactual_value != first.value
+    assert first.calculation_hash == second.calculation_hash
+
+
+@pytest.mark.asyncio
+async def test_new_information_does_not_set_revision_flag() -> None:
+    as_of = date(2024, 5, 15)
+    evidence = _revision_envelope(
+        effect=RevisionEffectType.NEW_INFORMATION,
+        prior_value=None,
+        current_value="103",
+    )
+    rows = _cpi_series(as_of=as_of, final="103", revision_evidence=evidence)
+    result = (
+        await FeatureEngine(
+            cast(Session, None), resolver=FakeResolver({as_of: rows})
+        ).compute_feature(
+            "US_CPI__INFLATION_3M_ANNUALIZED",
+            date(2024, 4, 1),
+            date(2024, 4, 1),
+            as_of,
+        )
+    )[0]
+
+    assert QualityFlag.REVISION_CHANGED_RESULT not in result.quality_flags
+    assert result.revision_effect is not None
+    assert result.revision_effect.result_changed is False
 
 
 @pytest.mark.asyncio

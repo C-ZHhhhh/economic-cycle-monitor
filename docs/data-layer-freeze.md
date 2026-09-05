@@ -205,3 +205,19 @@ The merge gate is the complete First Pilot offline comparison: all 594 exact ind
 pairs plus Stage 3A through Stage 3E economic outputs and new-provenance calculation hashes must
 match with zero network requests, future leakage, same-as-of violations, or PIT-unsafe
 classification.
+
+## DLCR-004 amendment: deterministic revision provenance
+
+DLCR-004 introduces the independent `revision-provenance-v2` authority without changing the
+source registry, PIT materialization authority, economic formulas, or Stage 3A-through-3E
+economic specification versions. A revision comparator now uses only persisted lineage: an
+explicit same-date supersession predecessor, otherwise the immediate previous change date in the
+same authoritative generation. A missing predecessor is explicit and cannot be inferred from
+runtime history.
+
+The canonical observation-set envelope distinguishes normal `NEW_INFORMATION` from
+`SOURCE_REVISION`, `OBSERVATION_REMOVAL`, and `OBSERVATION_STATUS_CHANGE`. Stage 3A through Stage
+3E derive revision, distribution, and result-change effects from that evidence and deterministic
+counterfactual calculations. Process-local prior results, call order, timestamps, and cache state
+are excluded from revision authority and hashes. The current path remains isolated, while PIT
+calculation hashes bind the revision-provenance version and hash. No model or migration changed.

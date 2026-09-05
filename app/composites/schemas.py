@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.pillars.schemas import PillarStatus
+from app.source_registry.revision_schemas import RevisionLayerEffect
 
 
 class StateArchitecture(StrEnum):
@@ -256,6 +257,10 @@ class MacroStateResult(BaseModel):
     macro_state_status: MacroStateStatus
     quality_flags: list[MacroStateQualityFlag]
     calculation_hash: str
+    revision_provenance_version: str | None = None
+    revision_provenance_hash: str | None = None
+    revision_evidence_hashes: tuple[str, ...] = ()
+    revision_effect: RevisionLayerEffect | None = None
 
     @model_validator(mode="after")
     def validate_state_result(self) -> "MacroStateResult":

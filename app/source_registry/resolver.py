@@ -38,6 +38,10 @@ from app.source_registry.pit_index import (
     authoritative_generation,
     source_information_set_date,
 )
+from app.source_registry.revision_provenance import (
+    build_revision_envelope,
+    load_revision_provenance_catalog,
+)
 from app.source_registry.schemas import (
     EffectiveObservation,
     FallbackReason,
@@ -336,6 +340,20 @@ def _resolve_pit(
         end=end,
         materialization=materialization,
     )
+    revision_authority = load_revision_provenance_catalog(
+        materialization=materialization,
+    )
+    if revision_authority.required_source_registry_hash != registry_hash:
+        raise PITInformationSetMalformed("REVISION_PROVENANCE_SOURCE_REGISTRY_DRIFT")
+    revision_evidence = build_revision_envelope(
+        session,
+        generation=generation,
+        current=information_set,
+        unit=policy.canonical.unit,
+        frequency=policy.canonical.frequency,
+        materialization=materialization,
+        authority=revision_authority,
+    )
     return [
         EffectiveObservation(
             indicator_id=policy.indicator_id,
@@ -367,6 +385,7 @@ def _resolve_pit(
             calculation_provenance_version=materialization.calculation_provenance.version,
             calculation_provenance_hash=materialization.calculation_provenance_hash,
             evaluation_result_hash=result_hash,
+            revision_evidence=revision_evidence,
         )
         for item in rows
     ]

@@ -67,6 +67,7 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["app", "agents"]
+exclude = ["^tmp/"]
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.data_quality.scope import RuntimeDomain
+from app.source_registry.revision_schemas import ObservationSetRevisionEnvelope
 
 
 class SourceSystem(StrEnum):
@@ -353,6 +354,7 @@ class EffectiveObservation(BaseModel):
     calculation_provenance_version: str | None = None
     calculation_provenance_hash: str | None = None
     evaluation_result_hash: str | None = None
+    revision_evidence: ObservationSetRevisionEnvelope | None = None
 
 
 class HealthSnapshot(BaseModel):

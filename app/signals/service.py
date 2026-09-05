@@ -26,6 +26,13 @@ from app.signals.schemas import (
     SignalStatus,
 )
 from app.source_registry.config import load_source_registry
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.revision_provenance import (
+    RevisionProvenanceCatalog,
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionEffectType, RevisionLayerEffect
 from app.source_registry.schemas import SourceRegistryCatalog
 
 _PROCESS_CACHE = SignalResultCache(max_entries=256)
@@ -82,11 +89,118 @@ def _propagated_flags(rows: Sequence[FeatureResult]) -> set[SignalQualityFlag]:
     flags: set[SignalQualityFlag] = set()
     for row in rows:
         for flag in row.quality_flags:
+            if flag.value == SignalQualityFlag.REVISION_CHANGED_RESULT.value:
+                continue
             try:
                 flags.add(SignalQualityFlag(flag.value))
             except ValueError:
                 continue
     return flags
+
+
+def _counterfactual_feature(row: FeatureResult) -> tuple[Decimal | None, FeatureStatus]:
+    """Return the canonical predecessor value/status carried by a Stage 3A result."""
+    effect = row.revision_effect
+    if effect is None:
+        return row.value, row.feature_status
+    try:
+        status = FeatureStatus(effect.counterfactual_status)
+    except ValueError as error:
+        raise SignalEngineError("INVALID_FEATURE_REVISION_STATUS") from error
+    return effect.counterfactual_value, status
+
+
+def _signal_revision_effect(
+    *,
+    definition: SignalDefinition,
+    target: FeatureResult,
+    history: list[FeatureResult],
+    current_status: SignalStatus,
+    current_directed: Decimal | None,
+    current_center: Decimal | None,
+    current_scale: Decimal | None,
+    authority: RevisionProvenanceCatalog,
+    extreme_value_threshold: Decimal,
+    low_dispersion_relative_threshold: Decimal,
+) -> RevisionLayerEffect | None:
+    """Compare a signal with the same result under canonical predecessor feature values."""
+    involved = [*history, target]
+    effects = [item.revision_effect for item in involved if item.revision_effect is not None]
+    if not effects:
+        return None
+    evidence_hashes = tuple(
+        sorted(
+            {
+                evidence_hash
+                for effect in effects
+                for evidence_hash in effect.source_revision_evidence_hashes
+            }
+        )
+    )
+    source_effects = tuple(
+        sorted(
+            {source_effect for effect in effects for source_effect in effect.source_effect_types},
+            key=str,
+        )
+    )
+    target_value, target_status = _counterfactual_feature(target)
+    counterfactual_history = [_counterfactual_feature(item) for item in history]
+    counterfactual_status = SignalStatus.FEATURE_ERROR
+    counterfactual_directed: Decimal | None = None
+    counterfactual_center: Decimal | None = None
+    counterfactual_scale: Decimal | None = None
+    if target_status is FeatureStatus.PIT_UNSAFE or any(
+        status is FeatureStatus.PIT_UNSAFE for _, status in counterfactual_history
+    ):
+        counterfactual_status = SignalStatus.PIT_UNSAFE
+    elif (
+        target_status is FeatureStatus.OK
+        and target_value is not None
+        and all(
+            status is FeatureStatus.OK and value is not None
+            for value, status in counterfactual_history
+        )
+    ):
+        outcome = rolling_zscore(
+            target_value,
+            [value for value, _ in counterfactual_history if value is not None],
+            full_window=definition.full_window,
+            min_history=definition.min_history,
+            extreme_value_threshold=extreme_value_threshold,
+            low_dispersion_relative_threshold=low_dispersion_relative_threshold,
+        )
+        counterfactual_status = outcome.status
+        counterfactual_center = outcome.center
+        counterfactual_scale = outcome.scale
+        if (
+            outcome.status is SignalStatus.OK
+            and outcome.normalized_value is not None
+            and definition.direction_multiplier is not None
+        ):
+            with localcontext() as context:
+                context.prec = 34
+                counterfactual_directed = outcome.normalized_value * definition.direction_multiplier
+    distribution_changed = (
+        current_center != counterfactual_center or current_scale != counterfactual_scale
+    ) and any(
+        item
+        in {
+            RevisionEffectType.SOURCE_REVISION,
+            RevisionEffectType.OBSERVATION_REMOVAL,
+            RevisionEffectType.OBSERVATION_STATUS_CHANGE,
+        }
+        for item in source_effects
+    )
+    return build_layer_effect(
+        authority=authority,
+        source_evidence_hashes=evidence_hashes,
+        source_effect_types=source_effects,
+        current_value=current_directed,
+        counterfactual_value=counterfactual_directed,
+        current_status=current_status.value,
+        counterfactual_status=counterfactual_status.value,
+        distribution_changed=distribution_changed,
+    )
 
 
 class SignalEngine:
@@ -126,27 +240,11 @@ class SignalEngine:
             feature_catalog=self.feature_catalog,
         )
         self.cache = cache if cache is not None else SignalResultCache()
-        self._revision_distributions: OrderedDict[
-            tuple[str, date], tuple[Decimal | None, Decimal | None]
-        ] = OrderedDict()
-
-    def _remember_revision(
-        self,
-        result: NormalizedSignalResult,
-        *,
-        max_entries: int = 512,
-    ) -> NormalizedSignalResult:
-        key = (result.signal_id, result.feature_observation_date)
-        current = (result.center, result.scale)
-        previous = self._revision_distributions.get(key)
-        flags = set(result.quality_flags)
-        if previous is not None and previous != current:
-            flags.add(SignalQualityFlag.REVISION_CHANGED_DISTRIBUTION)
-        self._revision_distributions[key] = current
-        self._revision_distributions.move_to_end(key)
-        while len(self._revision_distributions) > max_entries:
-            self._revision_distributions.popitem(last=False)
-        return result.model_copy(update={"quality_flags": sorted(flags, key=str)})
+        materialization = load_pit_materialization_catalog(source_registry=self.source_registry)
+        self.revision_provenance = load_revision_provenance_catalog(
+            source_registry=self.source_registry,
+            materialization=materialization,
+        )
 
     def _history_for_target(
         self,
@@ -228,6 +326,25 @@ class SignalEngine:
                 context.prec = 34
                 directed = normalized * definition.direction_multiplier
 
+        revision_effect = _signal_revision_effect(
+            definition=definition,
+            target=target,
+            history=history,
+            current_status=status or SignalStatus.FEATURE_ERROR,
+            current_directed=directed if status is SignalStatus.OK else None,
+            current_center=center,
+            current_scale=scale,
+            authority=self.revision_provenance,
+            extreme_value_threshold=self.signal_catalog.extreme_value_threshold,
+            low_dispersion_relative_threshold=(
+                self.signal_catalog.low_dispersion_relative_threshold
+            ),
+        )
+        if revision_effect is not None and revision_effect.result_changed:
+            flags.add(SignalQualityFlag.REVISION_CHANGED_RESULT)
+        if revision_effect is not None and revision_effect.distribution_changed:
+            flags.add(SignalQualityFlag.REVISION_CHANGED_DISTRIBUTION)
+
         history_hashes = [item.calculation_hash for item in history]
         history_hash = _hash_payload(history_hashes)
         input_hashes = [*history_hashes, target.calculation_hash]
@@ -242,7 +359,16 @@ class SignalEngine:
             "normalized": str(normalized) if normalized is not None else None,
             "directed": str(directed) if directed is not None else None,
             "status": status.value if status is not None else SignalStatus.FEATURE_ERROR.value,
+            "quality_flags": sorted(item.value for item in flags),
         }
+        if as_of is not None:
+            payload.update(
+                revision_provenance_version=(self.revision_provenance.revision_provenance_version),
+                revision_provenance_hash=self.revision_provenance.specification_hash,
+                revision_effect_hash=(
+                    revision_effect.revision_effect_hash if revision_effect is not None else None
+                ),
+            )
         result = NormalizedSignalResult(
             signal_id=definition.signal_id,
             feature_id=definition.feature_id,
@@ -286,8 +412,20 @@ class SignalEngine:
             signal_status=status or SignalStatus.FEATURE_ERROR,
             quality_flags=sorted(flags, key=str),
             calculation_hash=_hash_payload(payload),
+            revision_provenance_version=(
+                self.revision_provenance.revision_provenance_version if as_of is not None else None
+            ),
+            revision_provenance_hash=(
+                self.revision_provenance.specification_hash if as_of is not None else None
+            ),
+            revision_evidence_hashes=(
+                revision_effect.source_revision_evidence_hashes
+                if revision_effect is not None
+                else ()
+            ),
+            revision_effect=revision_effect,
         )
-        return self._remember_revision(result)
+        return result
 
     async def _compute_definition(
         self,

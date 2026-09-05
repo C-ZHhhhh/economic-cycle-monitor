@@ -1,0 +1,40 @@
+schema_version: "1.0.0"
+revision_provenance_version: revision-provenance-v2
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+required_pit_materialization_version: pit-materialization-v2
+required_pit_materialization_hash: 40b8b0701e2629e16d8210033520d41211520a970e60cd02e9c7c7f50b223652
+
+predecessor:
+  same_date_correction: EXPLICIT_SUPERSESSION_LINK_ONLY
+  previous_information_set: IMMEDIATE_PREVIOUS_CHANGE_DATE_SAME_GENERATION
+  missing_predecessor: NO_COMPARABLE_PREDECESSOR
+  prohibit_runtime_inference: true
+
+comparison:
+  observation_order: OBSERVATION_DATE_ASCENDING
+  compare_canonical_values: true
+  compare_presence: true
+  compare_missing_status: true
+  new_information_is_revision: false
+
+propagation:
+  stage3a: CANONICAL_COUNTERFACTUAL_RESULT
+  stage3b: CANONICAL_COUNTERFACTUAL_RESULT_AND_DISTRIBUTION
+  stage3c: CANONICAL_COUNTERFACTUAL_RESULT
+  stage3d: DETERMINISTIC_UPSTREAM_EFFECTS
+  stage3e: DETERMINISTIC_UPSTREAM_EFFECTS
+
+hash_policy:
+  include_authority_hash: true
+  include_information_set_hashes: true
+  include_canonical_diff_hash: true
+  include_typed_effects: true
+  exclude_runtime_state: true
+  exclude_cache_state: true
+  exclude_timestamps: true
+  exclude_row_ids: true
+
+current_path:
+  isolated_from_pit_revision_provenance: true
+  runtime_diagnostic_enabled: false
