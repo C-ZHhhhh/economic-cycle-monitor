@@ -20,6 +20,7 @@ from agents.macro.service import create_mock_run as create_mock_run_service
 from app.data_pipeline.bea_service import BeaPipelineService
 from app.data_pipeline.bls_service import BlsPipelineService
 from app.data_pipeline.census_service import CensusPipelineService
+from app.data_pipeline.current_refresh import CurrentRefreshRequest, CurrentRefreshRunner
 from app.data_pipeline.dol_service import DolPipelineService
 from app.data_pipeline.fed_service import FederalReservePipelineService
 from app.data_pipeline.repository import finish_sync_run, start_sync_run
@@ -377,6 +378,27 @@ def validate_data_layer_command(
         engine.dispose()
     _render(result.model_dump(mode="json"), json_output)
     if not result.current_data_ready:
+        raise typer.Exit(code=1)
+
+
+@app.command("refresh-current")
+def refresh_current_command(
+    indicator: list[str] = typer.Option(..., "--indicator"),
+    dry_run: bool = typer.Option(False),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Refresh registry-declared current primary and fallback sources."""
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        request = CurrentRefreshRequest(indicator_ids=indicator, dry_run=dry_run)
+        result = asyncio.run(CurrentRefreshRunner(engine, settings).run(request))
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, ValidationError):
+        _fail("Current refresh orchestration stopped safely")
+    finally:
+        engine.dispose()
+    _render(result.model_dump(mode="json"), json_output)
+    if result.status != "succeeded":
         raise typer.Exit(code=1)
 
 
