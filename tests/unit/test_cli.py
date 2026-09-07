@@ -100,6 +100,7 @@ def test_every_stage_two_command_has_help() -> None:
         "show-source-policy",
         "source-health",
         "validate-data-layer",
+        "refresh-current",
     ]
 
     for command in commands:
