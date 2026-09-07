@@ -28,6 +28,13 @@ from app.pillars.schemas import (
     PillarResult,
     PillarStatus,
 )
+from app.source_registry.config import load_source_registry
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.revision_provenance import (
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionEffectType
 
 PILLARS = load_pillar_catalog()
 COMPOSITE = load_composite_catalog(pillar_catalog=PILLARS)
@@ -39,6 +46,13 @@ MANUFACTURING = "US_MACRO__MANUFACTURING_AND_INVESTMENT"
 HOUSING = "US_MACRO__HOUSING_STRENGTH"
 GROWTH_IDS = [item.pillar_id for item in COMPOSITE.growth.pillars]
 CONTEXT_IDS = COMPOSITE.context_pillar_ids
+REGISTRY = load_source_registry()
+MATERIALIZATION = load_pit_materialization_catalog(source_registry=REGISTRY)
+REVISION_PROVENANCE = load_revision_provenance_catalog(
+    source_registry=REGISTRY,
+    materialization=MATERIALIZATION,
+)
+_UNSET = object()
 
 
 class FakePillarEngine:
@@ -70,6 +84,7 @@ def _pillar(
     pit_safe: bool = True,
     flags: list[PillarQualityFlag] | None = None,
     revision: int = 0,
+    counterfactual_value: Decimal | None | object = _UNSET,
 ) -> PillarResult:
     definition = PILLARS.by_pillar()[pillar_id]
     resolved_status = status or (
@@ -84,6 +99,20 @@ def _pillar(
         signal_id: Decimal(0) if index < valid else None
         for index, signal_id in enumerate(definition.primary_signal_ids)
     }
+    revision_effect = None
+    if counterfactual_value is not _UNSET:
+        revision_effect = build_layer_effect(
+            authority=REVISION_PROVENANCE,
+            source_evidence_hashes=("e" * 64,),
+            source_effect_types=(RevisionEffectType.SOURCE_REVISION,),
+            current_value=value,
+            counterfactual_value=counterfactual_value,  # type: ignore[arg-type]
+            current_status=resolved_status.value,
+            counterfactual_status=resolved_status.value,
+        )
+    resolved_flags = list(flags or [])
+    if revision_effect is not None and revision_effect.result_changed:
+        resolved_flags.append(PillarQualityFlag.REVISION_CHANGED_RESULT)
     return PillarResult(
         pillar_id=pillar_id,
         display_name=definition.display_name,
@@ -148,8 +177,14 @@ def _pillar(
         normalization_spec_hash=COMPOSITE.required_normalization_spec_hash,
         is_point_in_time_safe=pit_safe,
         pillar_status=resolved_status,
-        quality_flags=flags or [],
+        quality_flags=resolved_flags,
         calculation_hash=f"pillar:{pillar_id}:{as_of}:{value}:{revision}",
+        revision_provenance_version=(REVISION_PROVENANCE.revision_provenance_version),
+        revision_provenance_hash=REVISION_PROVENANCE.specification_hash,
+        revision_evidence_hashes=(
+            revision_effect.source_revision_evidence_hashes if revision_effect is not None else ()
+        ),
+        revision_effect=revision_effect,
     )
 
 
@@ -481,8 +516,8 @@ async def test_revision_changes_state_hash_and_propagates_only_real_flag() -> No
             item.pillar_id,
             Decimal("-0.3") if item.pillar_id == ACTIVITY else item.value,
             as_of=second_as_of,
-            flags=[PillarQualityFlag.REVISION_CHANGED_RESULT] if item.pillar_id == ACTIVITY else [],
             revision=1 if item.pillar_id == ACTIVITY else 0,
+            counterfactual_value=item.value if item.pillar_id == ACTIVITY else _UNSET,
         )
         for item in baseline_rows
     ]
@@ -492,6 +527,17 @@ async def test_revision_changes_state_hash_and_propagates_only_real_flag() -> No
     assert revised.calculation_hash != baseline.calculation_hash
     assert MacroStateQualityFlag.REVISION_CHANGED_RESULT in revised.quality_flags
     assert MacroStateQualityFlag.REVISION_CHANGED_RESULT not in baseline.quality_flags
+
+
+@pytest.mark.asyncio
+async def test_legacy_pillar_revision_flag_without_evidence_does_not_propagate() -> None:
+    rows = _complete_rows()
+    rows[0] = rows[0].model_copy(
+        update={"quality_flags": [PillarQualityFlag.REVISION_CHANGED_RESULT]}
+    )
+    result = await _engine(rows)[0].compute_macro_state(AS_OF)
+    assert MacroStateQualityFlag.REVISION_CHANGED_RESULT not in result.quality_flags
+    assert result.revision_effect is None
 
 
 @pytest.mark.asyncio
@@ -514,6 +560,9 @@ async def test_current_and_pit_cache_contexts_are_isolated() -> None:
     current = await _engine(current_rows, cache=cache)[0].compute_macro_state()
     pit = await _engine(_complete_rows(), cache=cache)[0].compute_macro_state(AS_OF)
     assert current.evaluation_mode is EvaluationMode.CURRENT
+    assert current.revision_provenance_version is None
+    assert current.revision_provenance_hash is None
+    assert current.revision_effect is None
     assert pit.evaluation_mode is EvaluationMode.PIT_DATE_EOD
     assert current.calculation_hash != pit.calculation_hash
     assert len(cache) == 2

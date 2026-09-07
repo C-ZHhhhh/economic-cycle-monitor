@@ -24,6 +24,8 @@ def test_v1_is_preserved_and_v2_binds_new_pit_authorities() -> None:
     assert v2.validation_spec_version == "stage3f-v2"
     assert v2.required_pit_materialization_spec_version == "pit-materialization-v2"
     assert v2.required_calculation_provenance_version == "pit-calculation-provenance-v2"
+    assert v2.required_revision_provenance_version == "revision-provenance-v2"
+    assert len(v2.required_revision_provenance_hash) == 64
     assert v2.equivalence.required_snapshot_pairs == 594
     assert v2.equivalence.external_alfred_http_requests == 0
     assert not v2.second_pilot_approved
@@ -33,6 +35,15 @@ def test_v1_is_preserved_and_v2_binds_new_pit_authorities() -> None:
 def test_v2_fails_closed_on_pit_authority_drift(tmp_path: Path) -> None:
     raw = yaml.safe_load(Path("config/validation/us_macro_stage3f_v2.yaml").read_text())
     raw["required_pit_materialization_spec_hash"] = "wrong"
+    path = tmp_path / "v2.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="PIT_AUTHORITY_DRIFT"):
+        load_stage3f_v2_catalog(path)
+
+
+def test_v2_fails_closed_on_revision_authority_drift(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("config/validation/us_macro_stage3f_v2.yaml").read_text())
+    raw["required_revision_provenance_hash"] = "wrong"
     path = tmp_path / "v2.yaml"
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="PIT_AUTHORITY_DRIFT"):

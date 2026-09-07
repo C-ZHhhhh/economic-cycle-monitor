@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.source_registry.revision_schemas import RevisionLayerEffect
+
 
 class PillarRole(StrEnum):
     """Whether a pillar is eligible for a future core composite."""
@@ -257,6 +259,10 @@ class PillarResult(BaseModel):
     pillar_status: PillarStatus
     quality_flags: list[PillarQualityFlag]
     calculation_hash: str
+    revision_provenance_version: str | None = None
+    revision_provenance_hash: str | None = None
+    revision_evidence_hashes: tuple[str, ...] = ()
+    revision_effect: RevisionLayerEffect | None = None
 
     @model_validator(mode="after")
     def validate_result_contract(self) -> "PillarResult":

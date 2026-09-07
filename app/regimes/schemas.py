@@ -15,6 +15,7 @@ from app.composites.schemas import (
     PillarComponentSnapshot,
 )
 from app.pillars.schemas import PillarStatus
+from app.source_registry.revision_schemas import RevisionLayerEffect
 
 
 class RegimeArchitecture(StrEnum):
@@ -326,6 +327,10 @@ class RegimeResult(BaseModel):
     pillar_spec_version: str
     pillar_spec_hash: str
     calculation_hash: str
+    revision_provenance_version: str | None = None
+    revision_provenance_hash: str | None = None
+    revision_evidence_hashes: tuple[str, ...] = ()
+    revision_effect: RevisionLayerEffect | None = None
 
     @model_validator(mode="after")
     def validate_result(self) -> "RegimeResult":
@@ -346,5 +351,4 @@ UPSTREAM_HISTORICAL_FLAG_MAP: dict[MacroStateQualityFlag, RegimeQualityFlag] = {
     MacroStateQualityFlag.HISTORICAL_COVERAGE_LIMITATION: (
         RegimeQualityFlag.HISTORICAL_COVERAGE_LIMITATION
     ),
-    MacroStateQualityFlag.REVISION_CHANGED_RESULT: RegimeQualityFlag.REVISION_CHANGED_RESULT,
 }

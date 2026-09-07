@@ -20,6 +20,11 @@ from app.signals.service import (
     compute_signal,
     compute_signal_set,
 )
+from app.source_registry.revision_provenance import (
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionEffectType
 
 REGISTRY_HASH = "7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758"
 FEATURES_BY_ID = load_feature_catalog().by_feature()
@@ -59,9 +64,23 @@ def _row(
     feature_spec_version: str = "stage3a-v1",
     flags: list[QualityFlag] | None = None,
     revision: int = 0,
+    counterfactual_value: Decimal | None | object = ...,
 ) -> FeatureResult:
     indicator, feature = FEATURES_BY_ID[feature_id]
     safe = as_of is not None if pit_safe is None else pit_safe
+    revision_effect = None
+    if counterfactual_value is not ...:
+        authority = load_revision_provenance_catalog()
+        prior_value = counterfactual_value if isinstance(counterfactual_value, Decimal) else None
+        revision_effect = build_layer_effect(
+            authority=authority,
+            source_evidence_hashes=("e" * 64,),
+            source_effect_types=(RevisionEffectType.SOURCE_REVISION,),
+            current_value=value,
+            counterfactual_value=prior_value,
+            current_status=status.value,
+            counterfactual_status=status.value,
+        )
     return FeatureResult(
         feature_id=feature_id,
         display_name=feature.display_name,
@@ -90,6 +109,14 @@ def _row(
         feature_status=status,
         quality_flags=flags or [],
         calculation_hash=(f"{feature_id}:{observation_date}:{value}:{revision}").encode().hex(),
+        revision_provenance_version=(
+            revision_effect.revision_provenance_version if revision_effect else None
+        ),
+        revision_provenance_hash=(
+            revision_effect.revision_provenance_hash if revision_effect else None
+        ),
+        revision_evidence_hash="e" * 64 if revision_effect else None,
+        revision_effect=revision_effect,
     )
 
 
@@ -270,6 +297,9 @@ async def test_current_and_pit_use_same_service_path_but_remain_isolated() -> No
     engine = SignalEngine(Session(), feature_engine=fake)
     target = current_rows[-1].feature_observation_date
     current = (await engine.compute_feature_signals(feature_id, target, target))[0]
+    assert current.revision_provenance_version is None
+    assert current.revision_provenance_hash is None
+    assert current.revision_effect is None
     fake.rows = pit_rows
     pit = (await engine.compute_feature_signals(feature_id, target, target, as_of))[0]
     assert current.as_of is None and not current.is_point_in_time_safe
@@ -304,6 +334,7 @@ async def test_feature_revision_invalidates_cache_and_changes_distribution() -> 
         fake.rows[-2].feature_observation_date,
         Decimal(500),
         revision=1,
+        counterfactual_value=Decimal(59),
     )
     second = (await engine.compute_feature_signals(feature_id, target, target))[0]
     assert first.center != second.center
@@ -324,7 +355,8 @@ async def test_target_revision_does_not_claim_prior_distribution_changed() -> No
         target,
         Decimal(500),
         revision=1,
-    ).model_copy(update={"quality_flags": [QualityFlag.REVISION_CHANGED_RESULT]})
+        counterfactual_value=Decimal(60),
+    )
     second = (await engine.compute_feature_signals(feature_id, target, target))[0]
     assert first.center == second.center
     assert first.scale == second.scale

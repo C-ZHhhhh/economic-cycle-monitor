@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import Awaitable, Sequence
 from datetime import date, datetime
 from decimal import Decimal, localcontext
@@ -22,6 +22,8 @@ from app.pillars.calculations import (
 from app.pillars.config import load_pillar_catalog
 from app.pillars.schemas import (
     ConfidenceComponents,
+    ContributionMappingParameters,
+    CoveragePolicy,
     PillarCatalog,
     PillarDefinition,
     PillarQualityFlag,
@@ -39,6 +41,13 @@ from app.signals.schemas import (
 )
 from app.signals.service import SignalEngine
 from app.source_registry.config import load_source_registry
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.revision_provenance import (
+    RevisionProvenanceCatalog,
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionLayerEffect
 from app.source_registry.schemas import SourceRegistryCatalog
 
 _PROCESS_CACHE = PillarResultCache(max_entries=128)
@@ -90,6 +99,81 @@ def _latest_by_signal(
     return latest
 
 
+def _pillar_revision_effect(
+    *,
+    primary_rows: Sequence[NormalizedSignalResult | None],
+    all_rows: Sequence[NormalizedSignalResult],
+    current_value: Decimal | None,
+    current_status: PillarStatus,
+    parameters: ContributionMappingParameters,
+    coverage_policy: CoveragePolicy,
+    authority: RevisionProvenanceCatalog,
+) -> RevisionLayerEffect | None:
+    """Compare a pillar with canonical predecessor signal values, never prior calls."""
+    effects = [item.revision_effect for item in all_rows if item.revision_effect is not None]
+    if not effects:
+        return None
+    evidence_hashes = tuple(
+        sorted(
+            {
+                evidence_hash
+                for effect in effects
+                for evidence_hash in effect.source_revision_evidence_hashes
+            }
+        )
+    )
+    source_effects = tuple(
+        sorted(
+            {source_effect for effect in effects for source_effect in effect.source_effect_types},
+            key=str,
+        )
+    )
+    counterfactual_values: list[Decimal] = []
+    for row in primary_rows:
+        if row is None:
+            continue
+        effect = row.revision_effect
+        value = effect.counterfactual_value if effect is not None else row.directed_value
+        status_value = (
+            effect.counterfactual_status if effect is not None else row.signal_status.value
+        )
+        try:
+            status = SignalStatus(status_value)
+        except ValueError as error:
+            raise PillarEngineError("INVALID_SIGNAL_REVISION_STATUS") from error
+        if status is SignalStatus.OK and value is not None:
+            counterfactual_values.append(value)
+    _, counterfactual_status = coverage_status(
+        len(counterfactual_values), len(primary_rows), coverage_policy
+    )
+    if current_status in {
+        PillarStatus.PIT_UNSAFE,
+        PillarStatus.SIGNAL_ERROR,
+        PillarStatus.SPEC_MISMATCH,
+    }:
+        counterfactual_status = current_status
+    counterfactual_value: Decimal | None = None
+    if counterfactual_status in {PillarStatus.OK, PillarStatus.PARTIAL}:
+        contributions = [
+            decimal_tanh(item, amplitude=parameters.amplitude, scale=parameters.scale)
+            for item in counterfactual_values
+        ]
+        with localcontext() as context:
+            context.prec = 50
+            counterfactual_value = sum(contributions, start=Decimal(0)) / Decimal(
+                len(contributions)
+            )
+    return build_layer_effect(
+        authority=authority,
+        source_evidence_hashes=evidence_hashes,
+        source_effect_types=source_effects,
+        current_value=current_value,
+        counterfactual_value=counterfactual_value,
+        current_status=current_status.value,
+        counterfactual_status=counterfactual_status.value,
+    )
+
+
 class PillarEngine:
     """Aggregate latest same-EOD Stage 3B signals into bounded semantic pillars."""
 
@@ -129,11 +213,10 @@ class PillarEngine:
             signal_catalog=self.signal_catalog,
         )
         self.cache = cache if cache is not None else PillarResultCache()
-        self._revision_results: OrderedDict[
-            tuple[str, tuple[tuple[str, date | None], ...]], tuple[Decimal | None, str]
-        ] = OrderedDict()
-        self._constituent_revision_values: OrderedDict[tuple[str, str, date], Decimal | None] = (
-            OrderedDict()
+        materialization = load_pit_materialization_catalog(source_registry=self.source_registry)
+        self.revision_provenance = load_revision_provenance_catalog(
+            source_registry=self.source_registry,
+            materialization=materialization,
         )
 
     def _cache_key(
@@ -196,65 +279,6 @@ class PillarEngine:
         elif any(row.as_of is not None for row in rows):
             return PillarStatus.PIT_UNSAFE
         return None
-
-    def _remember_revision(self, result: PillarResult) -> PillarResult:
-        key = (
-            result.pillar_id,
-            tuple(sorted(result.constituent_observation_dates.items())),
-        )
-        previous = self._revision_results.get(key)
-        flags = set(result.quality_flags)
-        constituent_flags = {
-            signal_id: list(values)
-            for signal_id, values in result.constituent_quality_flags.items()
-        }
-        constituent_changed = False
-        for signal_id, observation_date in result.constituent_observation_dates.items():
-            if observation_date is None:
-                continue
-            constituent_key = (result.pillar_id, signal_id, observation_date)
-            current_value = result.constituent_directed_values[signal_id]
-            prior_value = self._constituent_revision_values.get(constituent_key)
-            if prior_value is not None and prior_value != current_value:
-                constituent_changed = True
-                if "REVISION_CHANGED_RESULT" not in constituent_flags[signal_id]:
-                    constituent_flags[signal_id].append("REVISION_CHANGED_RESULT")
-            self._constituent_revision_values[constituent_key] = current_value
-            self._constituent_revision_values.move_to_end(constituent_key)
-        while len(self._constituent_revision_values) > 1024:
-            self._constituent_revision_values.popitem(last=False)
-        if previous is not None and previous[0] != result.value:
-            flags.add(PillarQualityFlag.REVISION_CHANGED_RESULT)
-        if constituent_changed:
-            flags.add(PillarQualityFlag.REVISION_CHANGED_RESULT)
-        self._revision_results[key] = (result.value, result.calculation_hash)
-        self._revision_results.move_to_end(key)
-        while len(self._revision_results) > 512:
-            self._revision_results.popitem(last=False)
-        if (
-            flags == set(result.quality_flags)
-            and constituent_flags == result.constituent_quality_flags
-        ):
-            return result
-        updated = result.model_copy(
-            update={
-                "quality_flags": sorted(flags, key=str),
-                "constituent_quality_flags": constituent_flags,
-                "confidence_components": result.confidence_components.model_copy(
-                    update={"revision_state": "CHANGED"}
-                ),
-            }
-        )
-        return updated.model_copy(
-            update={
-                "calculation_hash": _hash_payload(
-                    {
-                        "prior_hash": result.calculation_hash,
-                        "quality_flags": [item.value for item in updated.quality_flags],
-                    }
-                )
-            }
-        )
 
     def _build_result(
         self,
@@ -341,8 +365,6 @@ class PillarEngine:
             flags.add(PillarQualityFlag.DEGRADED_INPUT)
         if SignalQualityFlag.FALLBACK_INPUT in all_quality_flags:
             flags.add(PillarQualityFlag.FALLBACK_INPUT)
-        if SignalQualityFlag.REVISION_CHANGED_RESULT in all_quality_flags:
-            flags.add(PillarQualityFlag.REVISION_CHANGED_RESULT)
         if any(
             item is not None and abs(item) >= EXTREME_CONTRIBUTION_THRESHOLD
             for item in pre_map.values()
@@ -357,6 +379,18 @@ class PillarEngine:
             flags.add(PillarQualityFlag.LOW_COVERAGE)
         if definition.concentration_warning:
             flags.add(PillarQualityFlag.CONCENTRATION_WARNING)
+
+        revision_effect = _pillar_revision_effect(
+            primary_rows=primary_rows,
+            all_rows=input_rows,
+            current_value=value,
+            current_status=status,
+            parameters=parameters,
+            coverage_policy=self.pillar_catalog.coverage_policy,
+            authority=self.revision_provenance,
+        )
+        if revision_effect is not None and revision_effect.result_changed:
+            flags.add(PillarQualityFlag.REVISION_CHANGED_RESULT)
 
         expected_count = len(primary_rows)
         healthy_count = sum(
@@ -419,7 +453,7 @@ class PillarEngine:
             signal_id: row.calculation_hash if row is not None else None
             for signal_id, row in zip(definition.primary_signal_ids, primary_rows, strict=True)
         }
-        payload = {
+        payload: dict[str, object] = {
             "pillar_spec_hash": self.pillar_catalog.specification_hash,
             "pillar_id": definition.pillar_id,
             "evaluation_as_of": evaluation_date.isoformat(),
@@ -437,6 +471,14 @@ class PillarEngine:
             "status": status.value,
             "flags": sorted(item.value for item in flags),
         }
+        if evaluation_as_of is not None:
+            payload.update(
+                revision_provenance_version=(self.revision_provenance.revision_provenance_version),
+                revision_provenance_hash=self.revision_provenance.specification_hash,
+                revision_effect_hash=(
+                    revision_effect.revision_effect_hash if revision_effect is not None else None
+                ),
+            )
         result = PillarResult(
             pillar_id=definition.pillar_id,
             display_name=definition.display_name,
@@ -498,8 +540,24 @@ class PillarEngine:
             pillar_status=status,
             quality_flags=sorted(flags, key=str),
             calculation_hash=_hash_payload(payload),
+            revision_provenance_version=(
+                self.revision_provenance.revision_provenance_version
+                if evaluation_as_of is not None
+                else None
+            ),
+            revision_provenance_hash=(
+                self.revision_provenance.specification_hash
+                if evaluation_as_of is not None
+                else None
+            ),
+            revision_evidence_hashes=(
+                revision_effect.source_revision_evidence_hashes
+                if revision_effect is not None
+                else ()
+            ),
+            revision_effect=revision_effect,
         )
-        return self._remember_revision(result)
+        return result
 
     async def compute_pillar_set(
         self,

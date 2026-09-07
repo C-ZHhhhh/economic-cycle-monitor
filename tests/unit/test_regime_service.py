@@ -34,6 +34,13 @@ from app.regimes.schemas import (
     TrajectoryStatus,
 )
 from app.regimes.service import MacroRegimeEngine, compute_macro_regime
+from app.source_registry.config import load_source_registry
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.revision_provenance import (
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionEffectType
 
 COMPOSITE = load_composite_catalog()
 REGIMES = load_regime_catalog(composite_catalog=COMPOSITE)
@@ -43,6 +50,13 @@ GROWTH_IDS = [item.pillar_id for item in COMPOSITE.growth.pillars]
 INFLATION_ID = COMPOSITE.inflation_pillar_id
 CONTEXT_IDS = COMPOSITE.context_pillar_ids
 TWO_THIRDS = REGIMES.growth.minimum_confidence.value
+REGISTRY = load_source_registry()
+MATERIALIZATION = load_pit_materialization_catalog(source_registry=REGISTRY)
+REVISION_PROVENANCE = load_revision_provenance_catalog(
+    source_registry=REGISTRY,
+    materialization=MATERIALIZATION,
+)
+_UNSET = object()
 
 
 class FakeMacroStateEngine:
@@ -130,6 +144,7 @@ def _state(
         Decimal("0.4"),
     ),
     suffix: str = "base",
+    counterfactual_growth: Decimal | None | object = _UNSET,
 ) -> MacroStateResult:
     resolved_pit_safe = mode is EvaluationMode.PIT_DATE_EOD if pit_safe is None else pit_safe
     growth_status = (
@@ -139,6 +154,20 @@ def _state(
         if growth is not None
         else GrowthStatus.INSUFFICIENT_GROWTH_COVERAGE
     )
+    revision_effect = None
+    if counterfactual_growth is not _UNSET:
+        revision_effect = build_layer_effect(
+            authority=REVISION_PROVENANCE,
+            source_evidence_hashes=("e" * 64,),
+            source_effect_types=(RevisionEffectType.SOURCE_REVISION,),
+            current_value=growth,
+            counterfactual_value=counterfactual_growth,  # type: ignore[arg-type]
+            current_status=macro_status.value,
+            counterfactual_status=macro_status.value,
+        )
+    resolved_flags = list(flags or [])
+    if revision_effect is not None and revision_effect.result_changed:
+        resolved_flags.append(MacroStateQualityFlag.REVISION_CHANGED_RESULT)
     return MacroStateResult(
         state_id=COMPOSITE.state_id,
         composite_spec_version=COMPOSITE.composite_spec_version,
@@ -164,8 +193,14 @@ def _state(
         pillar_spec_hash=COMPOSITE.required_pillar_spec_hash,
         is_point_in_time_safe=resolved_pit_safe,
         macro_state_status=macro_status,
-        quality_flags=flags or [],
+        quality_flags=resolved_flags,
         calculation_hash=f"state:{as_of}:{growth}:{inflation}:{suffix}",
+        revision_provenance_version=(REVISION_PROVENANCE.revision_provenance_version),
+        revision_provenance_hash=REVISION_PROVENANCE.specification_hash,
+        revision_evidence_hashes=(
+            revision_effect.source_revision_evidence_hashes if revision_effect is not None else ()
+        ),
+        revision_effect=revision_effect,
     )
 
 
@@ -416,13 +451,24 @@ async def test_historical_and_revision_flags_propagate_without_transition_flag()
         AS_OF,
         flags=[
             MacroStateQualityFlag.HISTORICAL_COVERAGE_LIMITATION,
-            MacroStateQualityFlag.REVISION_CHANGED_RESULT,
         ],
+        counterfactual_growth=Decimal("-0.2"),
     )
     result = await _engine(current, _state(LAG))[0].compute_regime(AS_OF)
     assert RegimeQualityFlag.HISTORICAL_COVERAGE_LIMITATION in result.quality_flags
     assert RegimeQualityFlag.REVISION_CHANGED_RESULT in result.quality_flags
     assert all(item.value != "REGIME_TRANSITION" for item in result.quality_flags)
+
+
+@pytest.mark.asyncio
+async def test_legacy_macro_revision_flag_without_evidence_does_not_propagate() -> None:
+    current = _state(
+        AS_OF,
+        flags=[MacroStateQualityFlag.REVISION_CHANGED_RESULT],
+    )
+    result = await _engine(current, _state(LAG))[0].compute_regime(AS_OF)
+    assert RegimeQualityFlag.REVISION_CHANGED_RESULT not in result.quality_flags
+    assert result.revision_effect is None
 
 
 @pytest.mark.asyncio
@@ -498,7 +544,7 @@ async def test_revision_can_cross_boundary_and_changes_hash() -> None:
         _state(
             second_as_of,
             growth=Decimal("-0.0999"),
-            flags=[MacroStateQualityFlag.REVISION_CHANGED_RESULT],
+            counterfactual_growth=Decimal("-0.1001"),
             suffix="second",
         ),
         _state(second_lag),
@@ -547,6 +593,9 @@ async def test_current_and_pit_cache_keys_are_isolated() -> None:
     current = await engine.compute_regime()
     pit = await engine.compute_regime(AS_OF)
     assert current.evaluation_mode is EvaluationMode.CURRENT
+    assert current.revision_provenance_version is None
+    assert current.revision_provenance_hash is None
+    assert current.revision_effect is None
     assert pit.evaluation_mode is EvaluationMode.PIT_DATE_EOD
     assert current.calculation_hash != pit.calculation_hash
     assert len(cache) == 2

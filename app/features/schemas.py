@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.source_registry.revision_schemas import RevisionLayerEffect
+
 
 class FormulaId(StrEnum):
     """Closed formula vocabulary; configuration cannot execute expressions."""
@@ -147,3 +149,7 @@ class FeatureResult(BaseModel):
     feature_status: FeatureStatus
     quality_flags: list[QualityFlag]
     calculation_hash: str
+    revision_provenance_version: str | None = None
+    revision_provenance_hash: str | None = None
+    revision_evidence_hash: str | None = None
+    revision_effect: RevisionLayerEffect | None = None

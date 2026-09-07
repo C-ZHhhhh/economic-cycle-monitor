@@ -36,6 +36,14 @@ from app.regimes.schemas import (
     RegimeStatus,
     TrajectoryStatus,
 )
+from app.source_registry.config import load_source_registry
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.revision_provenance import (
+    RevisionProvenanceCatalog,
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionLayerEffect
 
 _PROCESS_CACHE = RegimeResultCache(max_entries=128)
 
@@ -62,6 +70,60 @@ def _hash_payload(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _regime_revision_effect(
+    current: MacroStateResult,
+    lagged: MacroStateResult,
+    *,
+    current_result_payload: object,
+    authority: RevisionProvenanceCatalog,
+) -> RevisionLayerEffect | None:
+    """Propagate only persisted upstream effects into the complete regime result."""
+    effects = [
+        effect for effect in (current.revision_effect, lagged.revision_effect) if effect is not None
+    ]
+    if not effects:
+        return None
+    evidence_hashes = tuple(
+        sorted(
+            {
+                evidence_hash
+                for effect in effects
+                for evidence_hash in effect.source_revision_evidence_hashes
+            }
+        )
+    )
+    source_effects = tuple(
+        sorted(
+            {source_effect for effect in effects for source_effect in effect.source_effect_types},
+            key=str,
+        )
+    )
+    changed = any(effect.result_changed for effect in effects)
+    return build_layer_effect(
+        authority=authority,
+        source_evidence_hashes=evidence_hashes,
+        source_effect_types=source_effects,
+        current_value=current.growth.value,
+        counterfactual_value=current.growth.value,
+        current_status=current.macro_state_status.value,
+        counterfactual_status=current.macro_state_status.value,
+        result_changed_override=changed,
+        current_result_payload=current_result_payload,
+        counterfactual_result_payload={
+            "current_upstream_counterfactual_hash": (
+                current.revision_effect.counterfactual_result_hash
+                if current.revision_effect is not None
+                else current.calculation_hash
+            ),
+            "lagged_upstream_counterfactual_hash": (
+                lagged.revision_effect.counterfactual_result_hash
+                if lagged.revision_effect is not None
+                else lagged.calculation_hash
+            ),
+        },
+    )
 
 
 class MacroRegimeEngine:
@@ -102,6 +164,12 @@ class MacroRegimeEngine:
             session, composite_catalog=composite
         )
         self.cache = cache if cache is not None else RegimeResultCache()
+        registry = load_source_registry()
+        materialization = load_pit_materialization_catalog(source_registry=registry)
+        self.revision_provenance = load_revision_provenance_catalog(
+            source_registry=registry,
+            materialization=materialization,
+        )
 
     def _cache_key(
         self,
@@ -393,6 +461,29 @@ class MacroRegimeEngine:
             and lag_failure is None
         )
         minimum_confidence = min(current.growth.confidence, current.inflation.confidence)
+        revision_payload = {
+            "growth_strength": growth_value,
+            "inflation_pressure": inflation_value,
+            "growth_condition": growth_condition,
+            "inflation_condition": inflation_condition,
+            "base_regime_id": base.regime_id if base is not None else None,
+            "growth_trajectory": growth_trajectory.model_dump(mode="json"),
+            "inflation_trajectory": inflation_trajectory.model_dump(mode="json"),
+            "context": [item.model_dump(mode="json") for item in current.context],
+            "regime_status": status,
+        }
+        revision_effect = (
+            _regime_revision_effect(
+                current,
+                lagged,
+                current_result_payload=revision_payload,
+                authority=self.revision_provenance,
+            )
+            if evaluation_as_of is not None
+            else None
+        )
+        if revision_effect is not None and revision_effect.result_changed:
+            flags.add(RegimeQualityFlag.REVISION_CHANGED_RESULT)
         result = RegimeResult(
             regime_spec_version=catalog.regime_spec_version,
             regime_spec_hash=catalog.specification_hash,
@@ -429,8 +520,34 @@ class MacroRegimeEngine:
             pillar_spec_version=current.pillar_spec_version,
             pillar_spec_hash=current.pillar_spec_hash,
             calculation_hash="pending",
+            revision_provenance_version=(
+                self.revision_provenance.revision_provenance_version
+                if evaluation_as_of is not None
+                else None
+            ),
+            revision_provenance_hash=(
+                self.revision_provenance.specification_hash
+                if evaluation_as_of is not None
+                else None
+            ),
+            revision_evidence_hashes=(
+                revision_effect.source_revision_evidence_hashes
+                if revision_effect is not None
+                else ()
+            ),
+            revision_effect=revision_effect,
         )
-        payload = result.model_dump(mode="json", exclude={"calculation_hash"})
+        excluded = {"calculation_hash"}
+        if evaluation_as_of is None:
+            excluded.update(
+                {
+                    "revision_provenance_version",
+                    "revision_provenance_hash",
+                    "revision_evidence_hashes",
+                    "revision_effect",
+                }
+            )
+        payload = result.model_dump(mode="json", exclude=excluded)
         return result.model_copy(update={"calculation_hash": _hash_payload(payload)})
 
     async def compute_regime(self, evaluation_as_of: date | None = None) -> RegimeResult:

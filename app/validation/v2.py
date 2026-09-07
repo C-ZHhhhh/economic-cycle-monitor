@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.revision_provenance import load_revision_provenance_catalog
 from app.validation.config import _active_authorities
 from app.validation.schemas import AuthorityBindings
 
@@ -53,6 +54,8 @@ class Stage3FV2Catalog(BaseModel):
     required_pit_materialization_spec_hash: str
     required_calculation_provenance_version: str
     required_calculation_provenance_hash: str
+    required_revision_provenance_version: str
+    required_revision_provenance_hash: str
     equivalence: EquivalenceAuthority
     bulk_observations_enabled: Literal[False]
     second_pilot_approved: Literal[False]
@@ -81,6 +84,9 @@ def load_stage3f_v2_catalog(
         if configured != getattr(economic, field_name):
             raise ValueError(f"PRODUCTION_AUTHORITY_DRIFT:{field_name}")
     materialization = load_pit_materialization_catalog()
+    revision_provenance = load_revision_provenance_catalog(
+        materialization=materialization,
+    )
     expected_pit = {
         "required_pit_materialization_spec_version": (
             materialization.pit_materialization_spec_version
@@ -88,6 +94,8 @@ def load_stage3f_v2_catalog(
         "required_pit_materialization_spec_hash": materialization.specification_hash,
         "required_calculation_provenance_version": (materialization.calculation_provenance.version),
         "required_calculation_provenance_hash": (materialization.calculation_provenance_hash),
+        "required_revision_provenance_version": (revision_provenance.revision_provenance_version),
+        "required_revision_provenance_hash": revision_provenance.specification_hash,
     }
     for key, expected in expected_pit.items():
         configured = raw[key]

@@ -29,8 +29,16 @@ from app.composites.schemas import (
     PillarComponentSnapshot,
 )
 from app.pillars.config import load_pillar_catalog
-from app.pillars.schemas import PillarCatalog, PillarQualityFlag, PillarResult, PillarStatus
+from app.pillars.schemas import PillarCatalog, PillarResult, PillarStatus
 from app.pillars.service import PillarEngine
+from app.source_registry.config import load_source_registry
+from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.revision_provenance import (
+    RevisionProvenanceCatalog,
+    build_layer_effect,
+    load_revision_provenance_catalog,
+)
+from app.source_registry.revision_schemas import RevisionLayerEffect
 
 _PROCESS_CACHE = MacroStateResultCache(max_entries=128)
 
@@ -57,6 +65,61 @@ def _hash_payload(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _macro_revision_effect(
+    rows: Sequence[PillarResult],
+    *,
+    current_status: MacroStateStatus,
+    growth: GrowthComponentResult,
+    inflation: PillarComponentSnapshot,
+    context: Sequence[PillarComponentSnapshot],
+    authority: RevisionProvenanceCatalog,
+) -> RevisionLayerEffect | None:
+    """Propagate deterministic pillar effects into the complete MacroState result."""
+    effects = [item.revision_effect for item in rows if item.revision_effect is not None]
+    if not effects:
+        return None
+    evidence_hashes = tuple(
+        sorted(
+            {
+                evidence_hash
+                for effect in effects
+                for evidence_hash in effect.source_revision_evidence_hashes
+            }
+        )
+    )
+    source_effects = tuple(
+        sorted(
+            {source_effect for effect in effects for source_effect in effect.source_effect_types},
+            key=str,
+        )
+    )
+    changed = any(item.result_changed for item in effects)
+    current_payload = {
+        "growth": growth.model_dump(mode="json"),
+        "inflation": inflation.model_dump(mode="json"),
+        "context": [item.model_dump(mode="json") for item in context],
+        "status": current_status.value,
+    }
+    counterfactual_payload = {
+        "upstream_counterfactual_hashes": sorted(
+            item.counterfactual_result_hash for item in effects
+        ),
+        "status": current_status.value,
+    }
+    return build_layer_effect(
+        authority=authority,
+        source_evidence_hashes=evidence_hashes,
+        source_effect_types=source_effects,
+        current_value=growth.value,
+        counterfactual_value=growth.value,
+        current_status=current_status.value,
+        counterfactual_status=current_status.value,
+        result_changed_override=changed,
+        current_result_payload=current_payload,
+        counterfactual_result_payload=counterfactual_payload,
+    )
 
 
 class MacroStateEngine:
@@ -97,6 +160,12 @@ class MacroStateEngine:
             session, pillar_catalog=self.pillar_catalog
         )
         self.cache = cache if cache is not None else MacroStateResultCache()
+        registry = load_source_registry()
+        materialization = load_pit_materialization_catalog(source_registry=registry)
+        self.revision_provenance = load_revision_provenance_catalog(
+            source_registry=registry,
+            materialization=materialization,
+        )
 
     def _ordered_ids(self) -> list[str]:
         return [
@@ -340,7 +409,15 @@ class MacroStateEngine:
             flags.add(MacroStateQualityFlag.LOW_PILLAR_CONFIDENCE)
         if failure is None and context_partial:
             flags.add(MacroStateQualityFlag.CONTEXT_PARTIAL)
-        if any(PillarQualityFlag.REVISION_CHANGED_RESULT in item.quality_flags for item in rows):
+        revision_effect = _macro_revision_effect(
+            rows,
+            current_status=macro_status,
+            growth=growth,
+            inflation=inflation,
+            context=context,
+            authority=self.revision_provenance,
+        )
+        if revision_effect is not None and revision_effect.result_changed:
             flags.add(MacroStateQualityFlag.REVISION_CHANGED_RESULT)
         if (
             evaluation_mode is EvaluationMode.PIT_DATE_EOD
@@ -355,7 +432,7 @@ class MacroStateEngine:
             and len(rows) == 9
             and all(item.is_point_in_time_safe for item in rows)
         )
-        payload = {
+        payload: dict[str, object] = {
             "state_id": self.composite_catalog.state_id,
             "composite_spec_version": self.composite_catalog.composite_spec_version,
             "composite_spec_hash": self.composite_catalog.specification_hash,
@@ -374,6 +451,14 @@ class MacroStateEngine:
                 for pillar_id in self._ordered_ids()
             ],
         }
+        if evaluation_as_of is not None:
+            payload.update(
+                revision_provenance_version=(self.revision_provenance.revision_provenance_version),
+                revision_provenance_hash=self.revision_provenance.specification_hash,
+                revision_effect_hash=(
+                    revision_effect.revision_effect_hash if revision_effect is not None else None
+                ),
+            )
         return MacroStateResult(
             state_id=self.composite_catalog.state_id,
             composite_spec_version=self.composite_catalog.composite_spec_version,
@@ -394,6 +479,22 @@ class MacroStateEngine:
             macro_state_status=macro_status,
             quality_flags=sorted(flags, key=str),
             calculation_hash=_hash_payload(payload),
+            revision_provenance_version=(
+                self.revision_provenance.revision_provenance_version
+                if evaluation_as_of is not None
+                else None
+            ),
+            revision_provenance_hash=(
+                self.revision_provenance.specification_hash
+                if evaluation_as_of is not None
+                else None
+            ),
+            revision_evidence_hashes=(
+                revision_effect.source_revision_evidence_hashes
+                if revision_effect is not None
+                else ()
+            ),
+            revision_effect=revision_effect,
         )
 
     async def compute_macro_state(self, evaluation_as_of: date | None = None) -> MacroStateResult:

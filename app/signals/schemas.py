@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.source_registry.revision_schemas import RevisionLayerEffect
+
 
 class EconomicAxis(StrEnum):
     """Approved economic semantics without macro good/bad interpretation."""
@@ -180,3 +182,7 @@ class NormalizedSignalResult(BaseModel):
     signal_status: SignalStatus
     quality_flags: list[SignalQualityFlag]
     calculation_hash: str
+    revision_provenance_version: str | None = None
+    revision_provenance_hash: str | None = None
+    revision_evidence_hashes: tuple[str, ...] = ()
+    revision_effect: RevisionLayerEffect | None = None
