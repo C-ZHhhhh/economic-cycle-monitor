@@ -102,6 +102,9 @@ def test_every_stage_two_command_has_help() -> None:
         "validate-data-layer",
         "validate-current-freshness-config",
         "refresh-current",
+        "build-macro-explanation-snapshot",
+        "render-macro-deterministic-report",
+        "explain-macro",
     ]
 
     for command in commands:
@@ -137,3 +140,9 @@ def test_show_source_policy_rejects_unknown_indicator() -> None:
     result = runner.invoke(cli.app, ["show-source-policy", "NOT_REAL"])
     assert result.exit_code == 1
     assert "Unknown source registry indicator" in result.stderr
+
+
+def test_explanation_pit_mode_requires_explicit_as_of() -> None:
+    result = runner.invoke(cli.app, ["build-macro-explanation-snapshot", "--mode", "pit"])
+    assert result.exit_code == 2
+    assert "required for PIT mode" in result.stderr

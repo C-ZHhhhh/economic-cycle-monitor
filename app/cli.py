@@ -3,6 +3,7 @@
 import asyncio
 import json
 import shutil
+import subprocess
 from collections.abc import Callable, Coroutine
 from datetime import date, datetime
 from pathlib import Path
@@ -17,7 +18,13 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from agents.macro.explanation_config import load_explanation_authority
+from agents.macro.explanation_llm import MockStructuredExplanationClient
+from agents.macro.explanation_persistence import persist_explanation_result
+from agents.macro.explanation_report import render_deterministic_report
+from agents.macro.explanation_service import MacroExplanationService
 from agents.macro.service import create_mock_run as create_mock_run_service
+from app.composites.schemas import EvaluationMode
 from app.data_pipeline.bea_service import BeaPipelineService
 from app.data_pipeline.bls_service import BlsPipelineService
 from app.data_pipeline.census_service import CensusPipelineService
@@ -187,6 +194,127 @@ def _parse_date(value: str, option_name: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise typer.BadParameter("must use YYYY-MM-DD", param_hint=option_name) from exc
+
+
+def _explanation_mode(mode: str) -> EvaluationMode:
+    normalized = mode.strip().casefold()
+    if normalized == "current":
+        return EvaluationMode.CURRENT
+    if normalized in {"pit", "pit_date_eod"}:
+        return EvaluationMode.PIT_DATE_EOD
+    raise typer.BadParameter("must be current or pit", param_hint="--mode")
+
+
+def _optional_as_of(value: str | None) -> date | None:
+    return _parse_date(value, "--as-of") if value is not None else None
+
+
+def _explanation_evaluation(mode: str, as_of: str | None) -> tuple[EvaluationMode, date | None]:
+    """Parse an explanation evaluation without permitting an implicit PIT date."""
+    evaluation_mode = _explanation_mode(mode)
+    evaluation_as_of = _optional_as_of(as_of)
+    if evaluation_mode is EvaluationMode.PIT_DATE_EOD and evaluation_as_of is None:
+        raise typer.BadParameter("is required for PIT mode", param_hint="--as-of")
+    return evaluation_mode, evaluation_as_of
+
+
+def _local_git_commit() -> str | None:
+    """Return local provenance without shell evaluation or network access."""
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+@app.command("build-macro-explanation-snapshot")
+def build_macro_explanation_snapshot(
+    mode: str = typer.Option("current", "--mode"),
+    as_of: str | None = typer.Option(None, "--as-of"),
+) -> None:
+    """Build a snapshot exclusively from locally persisted Stage 3 objects."""
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        evaluation_mode, evaluation_as_of = _explanation_evaluation(mode, as_of)
+        with db_session(engine) as session:
+            service = MacroExplanationService(session, load_explanation_authority())
+            snapshot = service.build_snapshot(
+                evaluation_mode=evaluation_mode,
+                evaluation_as_of=evaluation_as_of,
+            )
+    except (RuntimeError, ValueError) as exc:
+        _fail(f"Macro explanation snapshot is unavailable: {exc}")
+    except (SQLAlchemyError, OSError):
+        _fail("Macro explanation snapshot is unavailable from persisted-only inputs")
+    finally:
+        engine.dispose()
+    typer.echo(snapshot.model_dump_json(indent=2))
+
+
+@app.command("render-macro-deterministic-report")
+def render_macro_deterministic_report(
+    mode: str = typer.Option("current", "--mode"),
+    as_of: str | None = typer.Option(None, "--as-of"),
+) -> None:
+    """Render the official deterministic report with zero provider or LLM calls."""
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        evaluation_mode, evaluation_as_of = _explanation_evaluation(mode, as_of)
+        with db_session(engine) as session:
+            service = MacroExplanationService(session, load_explanation_authority())
+            snapshot = service.build_snapshot(
+                evaluation_mode=evaluation_mode,
+                evaluation_as_of=evaluation_as_of,
+            )
+            report = render_deterministic_report(snapshot)
+    except (RuntimeError, ValueError) as exc:
+        _fail(f"Deterministic macro report is unavailable: {exc}")
+    except (SQLAlchemyError, OSError):
+        _fail("Deterministic macro report is unavailable from persisted-only inputs")
+    finally:
+        engine.dispose()
+    typer.echo(report.markdown)
+
+
+@app.command("explain-macro")
+def explain_macro(
+    mode: str = typer.Option("current", "--mode"),
+    as_of: str | None = typer.Option(None, "--as-of"),
+    provider: str = typer.Option("mock", "--provider"),
+) -> None:
+    """Explicitly run the configured structured provider and persist validated output."""
+    if provider != "mock":
+        _fail("No live explanation provider is implemented; explicit mock is required")
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        evaluation_mode, evaluation_as_of = _explanation_evaluation(mode, as_of)
+        with db_session(engine) as session:
+            authority = load_explanation_authority()
+            service = MacroExplanationService(session, authority)
+            snapshot = service.build_snapshot(
+                evaluation_mode=evaluation_mode,
+                evaluation_as_of=evaluation_as_of,
+            )
+            result = asyncio.run(
+                service.explain(snapshot, client=MockStructuredExplanationClient())
+            )
+            run_id = persist_explanation_result(
+                session,
+                result,
+                git_commit=_local_git_commit(),
+            )
+    except (RuntimeError, ValueError) as exc:
+        _fail(f"Macro explanation could not be produced: {exc}")
+    except (SQLAlchemyError, OSError):
+        _fail("Macro explanation could not be produced from persisted-only inputs")
+    finally:
+        engine.dispose()
+    typer.echo(f"OK: persisted macro explanation {run_id}")
 
 
 def _parse_month(value: str, option_name: str) -> date:

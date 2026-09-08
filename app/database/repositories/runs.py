@@ -44,3 +44,27 @@ def get_reports_for_run(session: Session, run_id: UUID) -> Sequence[AgentReport]
         .order_by(AgentReport.created_at.asc())
     )
     return session.scalars(statement).all()
+
+
+def get_report_for_run_type(
+    session: Session,
+    run_id: UUID,
+    report_type: str,
+) -> AgentReport | None:
+    """Return one typed report for a run without triggering any computation."""
+    statement: Select[tuple[AgentReport]] = select(AgentReport).where(
+        AgentReport.run_id == run_id,
+        AgentReport.report_type == report_type,
+    )
+    return session.scalar(statement)
+
+
+def get_latest_report_by_type(session: Session, report_type: str) -> AgentReport | None:
+    """Return the newest persisted report of one type."""
+    statement: Select[tuple[AgentReport]] = (
+        select(AgentReport)
+        .where(AgentReport.report_type == report_type)
+        .order_by(AgentReport.created_at.desc(), AgentReport.id.desc())
+        .limit(1)
+    )
+    return session.scalar(statement)
