@@ -4,9 +4,10 @@ import asyncio
 import json
 import shutil
 from collections.abc import Callable, Coroutine
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, NoReturn
+from zoneinfo import ZoneInfo
 
 import typer
 from alembic import command
@@ -61,6 +62,10 @@ from app.source_mappings.config import (
 from app.source_mappings.repository import seed_source_mappings
 from app.source_registry.audit import audit_materialized_policy, audit_source_registry
 from app.source_registry.config import load_source_registry
+from app.source_registry.current_freshness import (
+    evaluate_current_freshness,
+    load_current_freshness_catalog,
+)
 from app.source_registry.health import indicator_source_health, provider_health
 from app.source_registry.readiness import validate_data_layer as validate_data_layer_service
 from app.validation.config import load_validation_catalog
@@ -379,6 +384,50 @@ def validate_data_layer_command(
     _render(result.model_dump(mode="json"), json_output)
     if not result.current_data_ready:
         raise typer.Exit(code=1)
+
+
+@app.command("validate-current-freshness-config")
+def validate_current_freshness_config_command(
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Validate the reviewed current-only release authority without network access."""
+    try:
+        registry = load_source_registry()
+        catalog = load_current_freshness_catalog(source_registry=registry)
+        now = datetime.now(ZoneInfo("America/New_York"))
+        family_results = []
+        for family in catalog.release_families:
+            expectation = evaluate_current_freshness(
+                catalog,
+                family.indicator_ids[0],
+                evaluated_at=now,
+            )
+            family_results.append(
+                {
+                    "release_family": family.release_family,
+                    "indicator_ids": family.indicator_ids,
+                    "calendar_period_count": len(family.calendar),
+                    "statuses": [entry.status.value for entry in family.calendar],
+                    "runtime_diagnostics": (
+                        expectation.diagnostics if expectation is not None else []
+                    ),
+                    "maintenance_warnings": (
+                        expectation.maintenance_warnings if expectation is not None else []
+                    ),
+                }
+            )
+    except (OSError, RuntimeError, ValueError, ValidationError):
+        _fail("Current freshness authority is invalid")
+    _render(
+        {
+            "current_freshness_version": catalog.current_freshness_version,
+            "current_freshness_hash": catalog.current_freshness_hash,
+            "required_source_registry_version": catalog.required_source_registry_version,
+            "required_source_registry_hash": catalog.required_source_registry_hash,
+            "release_families": family_results,
+        },
+        json_output,
+    )
 
 
 @app.command("refresh-current")

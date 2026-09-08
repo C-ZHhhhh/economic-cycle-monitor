@@ -373,6 +373,11 @@ class HealthSnapshot(BaseModel):
     schedule_is_certain: bool = True
     latest_observation_date: date | None = None
     latest_success_at: datetime | None = None
+    current_freshness_version: str | None = None
+    current_freshness_hash: str | None = None
+    release_family: str | None = None
+    calendar_entry_identity: str | None = None
+    effective_release_timestamp: datetime | None = None
     reasons: list[str] = Field(default_factory=list)
 
 
@@ -383,12 +388,15 @@ class ReadinessStatus(BaseModel):
 
     registry_policy_version: str
     registry_hash: str
+    current_freshness_version: str | None = None
+    current_freshness_hash: str | None = None
     current_data_ready: bool
     pit_contract_ready: bool
     pit_runtime_ready: bool
     pit_runtime_health: RuntimeHealth
     pit_backtest_ready: bool
     current_blockers: list[str] = Field(default_factory=list)
+    current_freshness_warnings: list[str] = Field(default_factory=list)
     pit_blockers: list[str] = Field(default_factory=list)
     pit_contract_blockers: list[str] = Field(default_factory=list)
     pit_runtime_blockers: list[str] = Field(default_factory=list)
