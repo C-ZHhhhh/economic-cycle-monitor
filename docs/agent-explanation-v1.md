@@ -82,6 +82,23 @@ The current implementation includes only the zero-network mock provider. A live
 provider requires a separately reviewed implementation and explicit runtime
 configuration.
 
+## Passive upstream context persistence
+
+The optional passive context tap records defensive copies of typed results that
+an existing Stage 3B-through-3E orchestration has already returned. Recording
+services delegate each call exactly once and return the original result without
+changing an economic calculation, authority, cache identity, or hash. The tap
+has no method that starts a Stage 3 calculation, refreshes current data, fetches
+a provider, or materializes an ALFRED information set.
+
+A completed capture fails closed unless it contains the matching `RegimeResult`,
+`MacroStateResult`, trajectory-lag state, exactly nine `PillarResult` objects,
+and every primary constituent `NormalizedSignalResult`. Current captures also
+require persisted readiness and health evidence. PIT captures reject those
+current-only fields. The resulting sealed context is stored through the same
+`AgentRun`/`AgentReport` JSONB contract and is the only input subsequently read
+by the explanation loader.
+
 ## Persistence and interfaces
 
 Validated artifacts reuse `AgentRun` and `AgentReport` JSONB. No migration is

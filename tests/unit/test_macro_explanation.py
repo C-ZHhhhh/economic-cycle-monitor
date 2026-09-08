@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal, localcontext
 
@@ -12,6 +13,12 @@ from sqlalchemy.orm import Session
 from agents.macro.explanation_builder import MacroExplanationSnapshotBuilder
 from agents.macro.explanation_cache import BoundedLRU, NarrativeCacheKey
 from agents.macro.explanation_config import load_explanation_authority
+from agents.macro.explanation_context_tap import (
+    PassiveStage3ContextTap,
+    RecordingMacroStateService,
+    RecordingPillarService,
+    RecordingSignalService,
+)
 from agents.macro.explanation_llm import (
     ExplanationOutputValidationError,
     MockStructuredExplanationClient,
@@ -37,12 +44,13 @@ from agents.macro.explanation_schemas import (
     StructuredExplanationResponse,
 )
 from agents.macro.explanation_service import MacroExplanationService
-from app.composites.schemas import EvaluationMode
+from app.composites.schemas import EvaluationMode, MacroStateResult
 from app.composites.service import MacroStateEngine
-from app.pillars.schemas import PillarRole
+from app.pillars.schemas import PillarResult, PillarRole
 from app.pillars.service import PillarEngine
 from app.regimes.calculations import subtract_calendar_months
 from app.regimes.service import MacroRegimeEngine
+from app.signals.schemas import NormalizedSignalResult
 from app.source_registry.schemas import ReadinessStatus, RuntimeHealth
 from tests.unit.test_composite_service import FakePillarEngine
 from tests.unit.test_pillar_service import PILLARS, FakeSignalEngine, _row
@@ -435,3 +443,129 @@ def test_prompt_is_versioned_and_forbids_recomputation() -> None:
     )
     assert "Do not recompute" in AUTHORITY.prompt_text
     assert "investment advice" in AUTHORITY.prompt_text
+
+
+@pytest.mark.asyncio
+async def test_passive_tap_seals_already_computed_current_context() -> None:
+    existing = await _context()
+    tap = PassiveStage3ContextTap()
+    tap.record_signals(None, existing.signals)
+    tap.record_pillars(None, existing.pillars)
+    tap.record_macro_state(existing.macro_state)
+    assert existing.lagged_macro_state is not None
+    tap.record_macro_state(existing.lagged_macro_state)
+
+    captured = tap.build_context(
+        existing.regime,
+        cadence=existing.cadence,
+        readiness=existing.readiness,
+        health=existing.health,
+        materialized_at=existing.materialized_at,
+    )
+
+    assert captured.regime == existing.regime
+    assert captured.macro_state == existing.macro_state
+    assert captured.lagged_macro_state == existing.lagged_macro_state
+    assert captured.pillars == tuple(sorted(existing.pillars, key=lambda row: row.pillar_id))
+    assert captured.persisted_context_hash == persisted_context_hash(captured)
+
+
+@pytest.mark.asyncio
+async def test_passive_tap_keeps_current_and_pit_inputs_isolated() -> None:
+    current = await _context()
+    pit = await _context(date(2022, 6, 30))
+    tap = PassiveStage3ContextTap()
+    for context, key in ((current, None), (pit, pit.evaluation_as_of)):
+        tap.record_signals(key, context.signals)
+        tap.record_pillars(key, context.pillars)
+        tap.record_macro_state(context.macro_state)
+        assert context.lagged_macro_state is not None
+        tap.record_macro_state(context.lagged_macro_state)
+
+    captured_current = tap.build_context(
+        current.regime,
+        cadence=current.cadence,
+        readiness=current.readiness,
+    )
+    captured_pit = tap.build_context(pit.regime, cadence=pit.cadence)
+
+    assert captured_current.evaluation_mode is EvaluationMode.CURRENT
+    assert captured_current.readiness is not None
+    assert captured_pit.evaluation_mode is EvaluationMode.PIT_DATE_EOD
+    assert captured_pit.readiness is None
+    assert all(item.as_of is None for item in captured_current.signals)
+    assert all(item.as_of == pit.evaluation_as_of for item in captured_pit.signals)
+
+
+@pytest.mark.asyncio
+async def test_recording_services_delegate_once_and_preserve_returned_objects() -> None:
+    existing = await _context(date(2022, 6, 30))
+    tap = PassiveStage3ContextTap()
+
+    class SignalService:
+        calls = 0
+
+        async def compute_signal_set(
+            self,
+            signal_ids: Sequence[str],
+            start: date,
+            end: date,
+            as_of: date | datetime | None = None,
+        ) -> list[NormalizedSignalResult]:
+            del signal_ids, start, end, as_of
+            self.calls += 1
+            return list(existing.signals)
+
+    class PillarService:
+        calls = 0
+
+        async def compute_all_pillars(
+            self, evaluation_as_of: date | None = None
+        ) -> list[PillarResult]:
+            del evaluation_as_of
+            self.calls += 1
+            return list(existing.pillars)
+
+    class MacroService:
+        calls = 0
+
+        async def compute_macro_state(
+            self, evaluation_as_of: date | None = None
+        ) -> MacroStateResult:
+            del evaluation_as_of
+            self.calls += 1
+            return existing.macro_state
+
+    signal_inner = SignalService()
+    pillar_inner = PillarService()
+    macro_inner = MacroService()
+    signal_service = RecordingSignalService(signal_inner, tap)
+    pillar_service = RecordingPillarService(pillar_inner, tap)
+    macro_service = RecordingMacroStateService(macro_inner, tap)
+
+    signal_rows = await signal_service.compute_signal_set(
+        [item.signal_id for item in existing.signals],
+        existing.evaluation_as_of,
+        existing.evaluation_as_of,
+        existing.evaluation_as_of,
+    )
+    pillar_rows = await pillar_service.compute_all_pillars(existing.evaluation_as_of)
+    macro_state = await macro_service.compute_macro_state(existing.evaluation_as_of)
+
+    assert signal_rows == list(existing.signals)
+    assert pillar_rows == list(existing.pillars)
+    assert macro_state is existing.macro_state
+    assert signal_inner.calls == pillar_inner.calls == macro_inner.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_passive_tap_fails_closed_when_upstream_context_is_incomplete() -> None:
+    existing = await _context()
+    tap = PassiveStage3ContextTap()
+    tap.record_macro_state(existing.macro_state)
+    with pytest.raises(RuntimeError, match="UPSTREAM_RESULT_NOT_MATERIALIZED"):
+        tap.build_context(
+            existing.regime,
+            cadence=existing.cadence,
+            readiness=existing.readiness,
+        )
