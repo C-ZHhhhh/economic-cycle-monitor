@@ -1,0 +1,83 @@
+schema_version: "1.0.0"
+current_freshness_version: current-freshness-v1
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+
+release_families:
+  - release_family: CENSUS_M3_FULL_REPORT
+    indicator_ids:
+      - US_CORE_CAPITAL_GOODS_ORDERS
+      - US_DURABLE_GOODS_ORDERS
+    timezone: America/New_York
+    operational_grace: PT48H
+    calendar:
+      - observation_period: 2026-05-01
+        scheduled_release_timestamp: "2026-07-02T10:00:00-04:00"
+        actual_release_timestamp: "2026-07-02T10:00:00-04:00"
+        status: RELEASED
+        official_source_url: https://www.census.gov/manufacturing/m3/release_schedule.html
+        official_event_id: null
+        verified_at: "2026-09-07T00:00:00-04:00"
+        previous_scheduled_timestamp: null
+        revision_reason: null
+        revision_evidence: null
+      - observation_period: 2026-06-01
+        scheduled_release_timestamp: "2026-08-04T10:00:00-04:00"
+        actual_release_timestamp: "2026-08-04T10:00:00-04:00"
+        status: RELEASED
+        official_source_url: https://www.census.gov/manufacturing/m3/release_schedule.html
+        official_event_id: null
+        verified_at: "2026-09-07T00:00:00-04:00"
+        previous_scheduled_timestamp: null
+        revision_reason: null
+        revision_evidence: null
+      - observation_period: 2026-07-01
+        scheduled_release_timestamp: "2026-09-02T10:00:00-04:00"
+        actual_release_timestamp: "2026-09-02T10:00:00-04:00"
+        status: RELEASED
+        official_source_url: https://www.census.gov/manufacturing/m3/current/index.html
+        official_event_id: A202609021000
+        verified_at: "2026-09-07T00:00:00-04:00"
+        previous_scheduled_timestamp: null
+        revision_reason: null
+        revision_evidence: null
+      - observation_period: 2026-08-01
+        scheduled_release_timestamp: "2026-10-02T10:00:00-04:00"
+        actual_release_timestamp: null
+        status: SCHEDULED
+        official_source_url: https://www.census.gov/manufacturing/m3/release_schedule.html
+        official_event_id: A202610021000
+        verified_at: "2026-09-07T00:00:00-04:00"
+        previous_scheduled_timestamp: null
+        revision_reason: null
+        revision_evidence: null
+      - observation_period: 2026-09-01
+        scheduled_release_timestamp: "2026-11-03T10:00:00-05:00"
+        actual_release_timestamp: null
+        status: SCHEDULED
+        official_source_url: https://www.census.gov/manufacturing/m3/release_schedule.html
+        official_event_id: A202611031000
+        verified_at: "2026-09-07T00:00:00-04:00"
+        previous_scheduled_timestamp: null
+        revision_reason: null
+        revision_evidence: null
+      - observation_period: 2026-10-01
+        scheduled_release_timestamp: "2026-12-03T10:00:00-05:00"
+        actual_release_timestamp: null
+        status: SCHEDULED
+        official_source_url: https://www.census.gov/manufacturing/m3/release_schedule.html
+        official_event_id: A202612031000
+        verified_at: "2026-09-07T00:00:00-04:00"
+        previous_scheduled_timestamp: null
+        revision_reason: null
+        revision_evidence: null
+      - observation_period: 2026-11-01
+        scheduled_release_timestamp: null
+        actual_release_timestamp: null
+        status: TBD
+        official_source_url: https://www.census.gov/manufacturing/m3/release_schedule.html
+        official_event_id: null
+        verified_at: "2026-09-07T00:00:00-04:00"
+        previous_scheduled_timestamp: null
+        revision_reason: null
+        revision_evidence: null

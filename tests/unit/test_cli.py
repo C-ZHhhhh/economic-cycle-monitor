@@ -100,6 +100,7 @@ def test_every_stage_two_command_has_help() -> None:
         "show-source-policy",
         "source-health",
         "validate-data-layer",
+        "validate-current-freshness-config",
         "refresh-current",
     ]
 
@@ -121,6 +122,14 @@ def test_show_source_policy_is_secret_free_json() -> None:
     assert result.exit_code == 0
     assert '"primary_source": "BEA"' in result.stdout
     assert '"registry_hash"' in result.stdout
+    assert "API_KEY" not in result.stdout
+
+
+def test_validate_current_freshness_config_is_offline_and_secret_free() -> None:
+    result = runner.invoke(cli.app, ["validate-current-freshness-config", "--json"])
+    assert result.exit_code == 0
+    assert '"current_freshness_version": "current-freshness-v1"' in result.stdout
+    assert '"release_family": "CENSUS_M3_FULL_REPORT"' in result.stdout
     assert "API_KEY" not in result.stdout
 
 

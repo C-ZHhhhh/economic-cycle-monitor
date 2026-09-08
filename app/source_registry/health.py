@@ -24,6 +24,11 @@ from app.database.models import (
     SyncRun,
 )
 from app.source_registry.config import storage_source_name
+from app.source_registry.current_freshness import (
+    CurrentFreshnessCatalog,
+    evaluate_current_freshness,
+    load_current_freshness_catalog,
+)
 from app.source_registry.schemas import (
     HealthSnapshot,
     MappingQuality,
@@ -85,6 +90,15 @@ class FreshnessExpectation:
     scheduled_release_at: datetime
     grace_ends_at: datetime
     schedule_is_certain: bool
+    current_freshness_version: str | None = None
+    current_freshness_hash: str | None = None
+    release_family: str | None = None
+    calendar_entry_identity: str | None = None
+    effective_release_timestamp: datetime | None = None
+    diagnostics: tuple[str, ...] = ()
+    maintenance_warnings: tuple[str, ...] = ()
+    coverage_expired: bool = False
+    grace_end_is_exclusive: bool = False
 
 
 def freshness_expectation(
@@ -92,10 +106,52 @@ def freshness_expectation(
     *,
     today: date | None = None,
     evaluated_at: datetime | None = None,
+    current_freshness: CurrentFreshnessCatalog | None = None,
 ) -> FreshnessExpectation:
     """Resolve the expected period with official calendars taking precedence."""
     if evaluated_at is not None and evaluated_at.utcoffset() is None:
         raise ValueError("evaluated_at must be timezone-aware")
+    current_authority = current_freshness or load_current_freshness_catalog()
+    current_instant = (
+        evaluated_at
+        if evaluated_at is not None
+        else datetime.combine(
+            today,
+            time.max,
+            tzinfo=ZoneInfo("America/New_York"),
+        )
+        if today is not None
+        else datetime.now(ZoneInfo("America/New_York"))
+    )
+    current_expectation = evaluate_current_freshness(
+        current_authority,
+        policy.indicator_id,
+        evaluated_at=current_instant,
+    )
+    if current_expectation is not None:
+        period = current_expectation.period or policy.history.earliest_primary_date
+        scheduled = (
+            current_expectation.scheduled_release_timestamp
+            or current_expectation.effective_release_timestamp
+            or current_instant
+        )
+        grace_ends = current_expectation.grace_ends_at or scheduled
+        return FreshnessExpectation(
+            period=period,
+            scheduled_release_at=scheduled,
+            grace_ends_at=grace_ends,
+            schedule_is_certain=current_expectation.schedule_is_certain,
+            current_freshness_version=current_authority.current_freshness_version,
+            current_freshness_hash=current_authority.current_freshness_hash,
+            release_family=current_expectation.release_family,
+            calendar_entry_identity=current_expectation.calendar_entry_identity,
+            effective_release_timestamp=current_expectation.effective_release_timestamp,
+            diagnostics=tuple(current_expectation.diagnostics),
+            maintenance_warnings=tuple(current_expectation.maintenance_warnings),
+            coverage_expired=current_expectation.coverage_expired,
+            grace_end_is_exclusive=True,
+        )
+
     if policy.freshness.release_calendar:
         timezone = ZoneInfo(policy.freshness.release_timezone or "UTC")
         instant = (
@@ -258,11 +314,17 @@ def indicator_source_health(
     *,
     today: date | None = None,
     evaluated_at: datetime | None = None,
+    current_freshness: CurrentFreshnessCatalog | None = None,
 ) -> HealthSnapshot:
     """Compute mapping-aware expected-period health for one primary source."""
     if today is not None and evaluated_at is not None:
         raise ValueError("provide today or evaluated_at, not both")
-    expectation = freshness_expectation(policy, today=today, evaluated_at=evaluated_at)
+    expectation = freshness_expectation(
+        policy,
+        today=today,
+        evaluated_at=evaluated_at,
+        current_freshness=current_freshness,
+    )
     evaluation_time = (
         evaluated_at.astimezone(UTC)
         if evaluated_at is not None
@@ -290,7 +352,10 @@ def indicator_source_health(
     reasons: list[str] = []
     latest_success = _latest_request(session, source, success=True)
 
-    if quality in {MappingQuality.INVALID, MappingQuality.PENDING_REVIEW}:
+    if expectation.coverage_expired:
+        state = RuntimeHealth.ERROR
+        reasons.extend(expectation.diagnostics)
+    elif quality in {MappingQuality.INVALID, MappingQuality.PENDING_REVIEW}:
         state = RuntimeHealth.ERROR
         reasons.append("MAPPING_NOT_PRODUCTION_ELIGIBLE")
     elif quality is MappingQuality.UNAVAILABLE:
@@ -314,7 +379,12 @@ def indicator_source_health(
         state = RuntimeHealth.UNAVAILABLE
         reasons.append("NO_PRIMARY_OBSERVATIONS")
     elif latest_date < expected:
-        if evaluation_time <= expectation.grace_ends_at.astimezone(UTC):
+        within_grace = (
+            evaluation_time < expectation.grace_ends_at.astimezone(UTC)
+            if expectation.grace_end_is_exclusive
+            else evaluation_time <= expectation.grace_ends_at.astimezone(UTC)
+        )
+        if within_grace:
             state = RuntimeHealth.DEGRADED
             reasons.append("EXPECTED_PERIOD_LAG_WITHIN_GRACE")
         else:
@@ -322,7 +392,7 @@ def indicator_source_health(
             reasons.append("EXPECTED_PERIOD_LAG_BEYOND_GRACE")
     elif not expectation.schedule_is_certain:
         state = RuntimeHealth.DEGRADED
-        reasons.append("RELEASE_SCHEDULE_UNAVAILABLE")
+        reasons.extend(expectation.diagnostics or ("RELEASE_SCHEDULE_UNAVAILABLE",))
     else:
         provider = provider_health(session, source)
         if provider.runtime_health in {RuntimeHealth.PARTIAL, RuntimeHealth.DEGRADED}:
@@ -333,6 +403,10 @@ def indicator_source_health(
             reasons.append("OBSERVATIONS_PRESENT_WITHOUT_CURRENT_REQUEST_EVIDENCE")
         else:
             state = RuntimeHealth.HEALTHY
+
+    reasons.extend(
+        warning for warning in expectation.maintenance_warnings if warning not in reasons
+    )
 
     return HealthSnapshot(
         indicator_id=policy.indicator_id,
@@ -345,6 +419,11 @@ def indicator_source_health(
         schedule_is_certain=expectation.schedule_is_certain,
         latest_observation_date=latest_date,
         latest_success_at=latest_success.finished_at if latest_success is not None else None,
+        current_freshness_version=expectation.current_freshness_version,
+        current_freshness_hash=expectation.current_freshness_hash,
+        release_family=expectation.release_family,
+        calendar_entry_identity=expectation.calendar_entry_identity,
+        effective_release_timestamp=expectation.effective_release_timestamp,
         reasons=reasons,
     )
 

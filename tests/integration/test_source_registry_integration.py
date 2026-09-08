@@ -35,6 +35,7 @@ from app.source_mappings.config import SOURCE_MAPPING_PATHS, load_source_mapping
 from app.source_mappings.repository import seed_source_mappings
 from app.source_registry.audit import audit_materialized_policy
 from app.source_registry.config import load_source_registry, storage_source_name
+from app.source_registry.current_freshness import load_current_freshness_catalog
 from app.source_registry.health import (
     expected_latest_period,
     historical_audit_event_is_current,
@@ -193,6 +194,122 @@ def test_monthly_grace_is_measured_after_expected_release_date(
     assert snapshot.expected_latest_period == date(2098, 7, 1)
     assert snapshot.runtime_health is RuntimeHealth.DEGRADED
     assert snapshot.reasons == ["EXPECTED_PERIOD_LAG_WITHIN_GRACE"]
+
+
+@pytest.mark.parametrize(
+    "indicator_id",
+    ["US_DURABLE_GOODS_ORDERS", "US_CORE_CAPITAL_GOODS_ORDERS"],
+)
+def test_dlcr005_full_m3_release_boundary_grace_and_recovery(
+    postgres_session: Session,
+    indicator_id: str,
+) -> None:
+    registry = _seed_all(postgres_session)
+    policy = registry.by_indicator()[indicator_id]
+    _reset_indicator_observations(postgres_session, indicator_id)
+    _observation(postgres_session, indicator_id, "census", date(2026, 6, 1))
+    _request(postgres_session, "census", datetime(2026, 9, 2, 14, 0, tzinfo=UTC))
+    postgres_session.flush()
+
+    before = indicator_source_health(
+        postgres_session,
+        policy,
+        evaluated_at=datetime.fromisoformat("2026-09-02T09:59:59-04:00"),
+    )
+    at_release = indicator_source_health(
+        postgres_session,
+        policy,
+        evaluated_at=datetime.fromisoformat("2026-09-02T10:00:00-04:00"),
+    )
+    at_grace_end = indicator_source_health(
+        postgres_session,
+        policy,
+        evaluated_at=datetime.fromisoformat("2026-09-04T10:00:00-04:00"),
+    )
+
+    assert before.expected_latest_period == date(2026, 6, 1)
+    assert before.runtime_health is RuntimeHealth.HEALTHY
+    assert at_release.expected_latest_period == date(2026, 7, 1)
+    assert at_release.runtime_health is RuntimeHealth.DEGRADED
+    assert at_release.reasons == ["EXPECTED_PERIOD_LAG_WITHIN_GRACE"]
+    assert at_grace_end.runtime_health is RuntimeHealth.STALE
+    assert at_grace_end.reasons == ["EXPECTED_PERIOD_LAG_BEYOND_GRACE"]
+    assert at_release.current_freshness_version == "current-freshness-v1"
+    assert at_release.current_freshness_hash is not None
+    assert at_release.release_family == "CENSUS_M3_FULL_REPORT"
+    assert at_release.calendar_entry_identity is not None
+    assert at_release.effective_release_timestamp == datetime.fromisoformat(
+        "2026-09-02T10:00:00-04:00"
+    )
+
+    _observation(postgres_session, indicator_id, "census", date(2026, 7, 1))
+    postgres_session.flush()
+    recovered = indicator_source_health(
+        postgres_session,
+        policy,
+        evaluated_at=datetime.fromisoformat("2026-09-04T10:00:00-04:00"),
+    )
+    assert recovered.runtime_health is RuntimeHealth.HEALTHY
+
+
+def test_dlcr005_primary_stale_with_fresh_fallback_still_blocks_readiness(
+    postgres_session: Session,
+) -> None:
+    registry = _seed_all(postgres_session)
+    target = "US_DURABLE_GOODS_ORDERS"
+    evaluation = datetime.fromisoformat("2026-09-04T10:00:00-04:00")
+    for source in {storage_source_name(item.primary_source.value) for item in registry.policies}:
+        _request(postgres_session, source, datetime(2026, 9, 4, 14, 0, tzinfo=UTC))
+    _alfred_request(postgres_session, datetime(2026, 9, 4, 14, 0, tzinfo=UTC))
+    for policy in registry.policies:
+        if policy.indicator_id == target:
+            _observation(postgres_session, target, "census", date(2026, 6, 1))
+            _observation(postgres_session, target, "fred", date(2026, 7, 1))
+        else:
+            _observation(
+                postgres_session,
+                policy.indicator_id,
+                storage_source_name(policy.primary_source.value),
+                date(2099, 1, 1),
+            )
+    postgres_session.flush()
+
+    readiness = validate_data_layer(
+        postgres_session,
+        registry=registry,
+        evaluated_at=evaluation,
+    )
+    rows = get_effective_observations(
+        postgres_session,
+        target,
+        date(2026, 7, 1),
+        date(2026, 7, 1),
+        registry=registry,
+        evaluated_at=evaluation,
+    )
+
+    assert not readiness.current_data_ready
+    assert readiness.pit_backtest_ready
+    assert readiness.current_blockers == [f"RUNTIME_STALE:{target}"]
+    assert readiness.current_freshness_version == "current-freshness-v1"
+    assert readiness.current_freshness_hash is not None
+    assert readiness.current_freshness_warnings == []
+    assert rows[-1].source_used == "fred"
+    assert rows[-1].is_fallback
+    assert rows[-1].resolution_reason == "PRIMARY_STALE_BEYOND_GRACE"
+
+    freshness = load_current_freshness_catalog(source_registry=registry)
+    family = freshness.release_families[0].model_copy(
+        update={"calendar": freshness.release_families[0].calendar[:3]}
+    )
+    expired_authority = freshness.model_copy(update={"release_families": [family]})
+    expired = validate_data_layer(
+        postgres_session,
+        registry=registry,
+        evaluated_at=evaluation,
+        current_freshness=expired_authority,
+    )
+    assert f"CURRENT_CALENDAR_COVERAGE_EXPIRED:{target}" in expired.current_blockers
 
 
 def _reset_indicator_observations(session: Session, indicator_id: str) -> None:
