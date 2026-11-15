@@ -105,6 +105,25 @@ Shortening the grace window would change the registry hash and every authority
 bound to it, and would make stored snapshots non-comparable with new ones; it
 needs its own reviewed registry version.
 
+### Incremental change-index refresh with no new vintage
+
+ALFRED answers a `series/vintagedates` request whose real-time range holds no
+vintage date with HTTP 500, not an empty page. The incremental refresh asked for
+exactly the uncovered interval (`complete_through + 1` to the evaluation date),
+which is empty on most days for most series, so a second run on the following
+day retried every indicator through the full backoff and could not build the
+lagged trajectory state. Found on 2026-11-15, the day after the first run.
+
+`refresh_change_index` now asks from the last change date the prior generation
+already proved. That date must come back, so the answer is never empty and an
+outage stays distinguishable from "nothing new". The refresh fails closed if the
+anchor is missing or if the provider returns a date inside the interval already
+proven complete. The anchor is bound into the new generation's hash.
+
+Still slow under a real ALFRED outage: discovery is retried on every resolver
+call for the same indicator and date, so a provider failure costs several
+minutes before the run stops.
+
 ## Verification on 2026-11-14
 
 - `refresh-current` for all 33 indicators: `succeeded`, `CURRENT_DATA_READY=true`,

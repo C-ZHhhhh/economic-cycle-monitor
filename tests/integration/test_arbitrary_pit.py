@@ -92,21 +92,30 @@ def _client(
 
 
 class _DefaultIndexTransport(httpx.AsyncBaseTransport):
-    """Supply one complete semantic change date before delegating observation calls."""
+    """Serve a stable vintage history: every requested end date is a change date.
+
+    Like the provider, a request returns every known change date inside its
+    real-time range, so an incremental refresh that starts at the last proven
+    change date gets that date back together with the new one.
+    """
 
     def __init__(self, delegate: httpx.AsyncBaseTransport) -> None:
         self.delegate = delegate
+        self.change_dates: set[str] = set()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("series/vintagedates"):
-            change_date = request.url.params["realtime_end"]
+            start = request.url.params["realtime_start"]
+            end = request.url.params["realtime_end"]
+            self.change_dates.add(end)
+            in_range = sorted(item for item in self.change_dates if start <= item <= end)
             return httpx.Response(
                 200,
                 json={
-                    "count": 1,
+                    "count": len(in_range),
                     "offset": int(request.url.params.get("offset", "0")),
                     "limit": int(request.url.params.get("limit", "10000")),
-                    "vintage_dates": [change_date],
+                    "vintage_dates": in_range,
                 },
             )
         return await self.delegate.handle_async_request(request)
