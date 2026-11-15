@@ -8,6 +8,26 @@
 修订和 FRED 交叉验证，以及 5 项待真实验证的 BEA NIPA 候选映射。BLS、BEA 与
 FRED 按来源独立保存，不执行评分或调用真实 LLM。
 
+## 一键生成最新报告
+
+```bash
+python -m app.cli run-macro-report
+```
+
+这条命令依次完成三件事：从官方接口把 33 项指标刷新到最新，计算当前的宏观状态并存入
+数据库，生成一份带图表和文字解读的 HTML 报告。报告写到
+`outputs/us_macro_report_<日期>.html` 和 `outputs/us_macro_report_latest.html`，
+用浏览器打开即可。终端里同时打印一段简短结论。
+
+- 需要本机 `.env` 里配置好 `FRED_API_KEY` 等密钥，并把各数据源的 `*_ENABLED` 设为 `true`。
+- `--no-refresh`：不联网刷新，只用库里已有的数据重新计算。
+- `--render-only`：不计算，只把最近一次存下的快照重新渲染成报告。
+- 第一次使用前可导入历史基线，报告里的历史曲线才完整：
+  `python -m app.cli import-macro-history --from <stage3f 的 production_results.jsonl>`
+
+每次运行都会存下一份快照，下次运行时报告会显示“和上一次相比变了什么”。
+设计说明见 `docs/dlcr-006-permanent-gaps-and-current-run.md`。
+
 ## 环境与安装
 
 目标环境为 macOS / Apple Silicon、Python 3.12、Docker Desktop 与 Git。单个

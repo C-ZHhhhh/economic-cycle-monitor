@@ -410,3 +410,65 @@ def test_g19_comparison_requires_auditable_wire_scale_and_identity_normalization
         )
     )
     assert summary.results[0]["counts"] == {"normalization_mismatch": 1}
+
+
+@pytest.mark.integration
+def test_full_comparison_closes_value_conflicts_that_no_longer_reproduce(
+    postgres_session: Session,
+) -> None:
+    from app.database.models import DataQualityEvent
+
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    when = date.today() - timedelta(days=120)
+    stale_fallback = _observation("fred", when, "5.0")
+    postgres_session.add_all([_observation("bls", when, "4.0"), stale_fallback])
+    postgres_session.flush()
+    options = SourceComparisonOptions(indicator_id="US_UNEMPLOYMENT_RATE")
+
+    def open_conflicts() -> int:
+        return len(
+            postgres_session.scalars(
+                select(DataQualityEvent).where(
+                    DataQualityEvent.indicator_id == "US_UNEMPLOYMENT_RATE",
+                    DataQualityEvent.event_type == "source_value_conflict",
+                    DataQualityEvent.resolved_at.is_(None),
+                )
+            ).all()
+        )
+
+    SourceComparisonService(postgres_session).compare(options)
+    assert open_conflicts() == 1
+
+    # A bounded or dry-run comparison is not an authority and must not close anything.
+    stale_fallback.value = Decimal("4.0")
+    postgres_session.flush()
+    SourceComparisonService(postgres_session).compare(
+        options.model_copy(update={"start": when, "end": when})
+    )
+    SourceComparisonService(postgres_session).compare(options.model_copy(update={"dry_run": True}))
+    assert open_conflicts() == 1
+
+    summary = SourceComparisonService(postgres_session).compare(options)
+    assert summary.results[0]["counts"] == {"match": 1}
+    assert open_conflicts() == 0
+
+
+@pytest.mark.integration
+def test_full_comparison_keeps_conflicts_that_still_reproduce(postgres_session: Session) -> None:
+    from app.database.models import DataQualityEvent
+
+    seed_indicator_catalog(postgres_session, load_indicator_catalog())
+    when = date.today() - timedelta(days=120)
+    postgres_session.add_all([_observation("bls", when, "4.0"), _observation("fred", when, "5.0")])
+    postgres_session.flush()
+    options = SourceComparisonOptions(indicator_id="US_UNEMPLOYMENT_RATE")
+    SourceComparisonService(postgres_session).compare(options)
+    SourceComparisonService(postgres_session).compare(options)
+    events = postgres_session.scalars(
+        select(DataQualityEvent).where(
+            DataQualityEvent.indicator_id == "US_UNEMPLOYMENT_RATE",
+            DataQualityEvent.event_type == "source_value_conflict",
+        )
+    ).all()
+    assert len(events) == 1
+    assert events[0].resolved_at is None

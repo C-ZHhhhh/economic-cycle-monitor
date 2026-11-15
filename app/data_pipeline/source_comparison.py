@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.data_pipeline.repository import finish_sync_run, start_sync_run
 from app.data_pipeline.schemas import SourceComparisonOptions, SyncSummary
 from app.data_quality.checks import QualityIssue, Severity, official_source_issue
-from app.data_quality.repository import persist_quality_issues
+from app.data_quality.repository import persist_quality_issues, reconcile_quality_issues
 from app.database.models import (
     IndicatorRegistry,
     IndicatorSourceMapping,
@@ -23,6 +23,8 @@ from app.source_mappings.config import load_source_mapping_catalog_for
 from app.source_mappings.policy import source_mapping_is_direct
 from app.source_mappings.repository import list_source_mappings, seed_source_mappings
 from app.source_mappings.schemas import SourceMappingDefinition
+
+_VALUE_CONFLICT = "source_value_conflict"
 
 
 class SourceComparisonService:
@@ -98,9 +100,28 @@ class SourceComparisonService:
                         issues.append(issue)
                 self.session.flush()
                 offset += len(dates)
-            summary.quality_event_count += persist_quality_issues(
-                self.session, issues, run_id=run.run_id
-            )
+            if options.dry_run or options.start is not None or options.end is not None:
+                summary.quality_event_count += persist_quality_issues(
+                    self.session, issues, run_id=run.run_id
+                )
+            else:
+                # A complete, persisted comparison is the authority for value
+                # conflicts: one that no longer reproduces (both sources now carry the
+                # same revised history) is closed instead of blocking the indicator
+                # forever. Conflicts that still reproduce stay open and fail closed.
+                conflicts = [item for item in issues if item.event_type == _VALUE_CONFLICT]
+                inserted, _resolved = reconcile_quality_issues(
+                    self.session,
+                    conflicts,
+                    run_id=run.run_id,
+                    indicator_id=indicator.indicator_id,
+                    event_types=[_VALUE_CONFLICT],
+                )
+                summary.quality_event_count += inserted + persist_quality_issues(
+                    self.session,
+                    [item for item in issues if item.event_type != _VALUE_CONFLICT],
+                    run_id=run.run_id,
+                )
             summary.success_count += 1
             summary.results.append(
                 {"indicator_id": indicator.indicator_id, "counts": dict(sorted(counters.items()))}

@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from sqlalchemy.orm import Session
 
 from app.features.config import load_feature_catalog
-from app.features.formulas import shift_period
+from app.features.formulas import expected_input_dates, shift_period
 from app.features.schemas import FeatureCatalog, FeatureResult, FeatureStatus
 from app.features.service import FeatureEngine
 from app.signals.cache import SignalCacheKey, SignalResultCache
@@ -27,6 +27,7 @@ from app.signals.schemas import (
 )
 from app.source_registry.config import load_source_registry
 from app.source_registry.materialization import load_pit_materialization_catalog
+from app.source_registry.permanent_gaps import PermanentGapCatalog, load_permanent_gap_catalog
 from app.source_registry.revision_provenance import (
     RevisionProvenanceCatalog,
     build_layer_effect,
@@ -215,6 +216,7 @@ class SignalEngine:
         signal_catalog: SignalCatalog | None = None,
         feature_engine: FeatureService | None = None,
         cache: SignalResultCache | None = None,
+        permanent_gaps: PermanentGapCatalog | None = None,
     ) -> None:
         self.session = session
         self.source_registry = source_registry or load_source_registry()
@@ -240,11 +242,27 @@ class SignalEngine:
             feature_catalog=self.feature_catalog,
         )
         self.cache = cache if cache is not None else SignalResultCache()
+        self.permanent_gaps = permanent_gaps or load_permanent_gap_catalog(
+            source_registry=self.source_registry
+        )
         materialization = load_pit_materialization_catalog(source_registry=self.source_registry)
         self.revision_provenance = load_revision_provenance_catalog(
             source_registry=self.source_registry,
             materialization=materialization,
         )
+
+    @staticmethod
+    def _blocked_only_by_permanent_gap(
+        row: FeatureResult, gap_periods: frozenset[date], *, frequency: str
+    ) -> bool:
+        """Return whether a failed history feature lacks only declared permanent gaps."""
+        if row.feature_status is not FeatureStatus.MISSING_INPUT_PERIOD:
+            return False
+        expected = expected_input_dates(
+            row.formula_id, row.feature_observation_date, frequency, row.window
+        )
+        missing = set(expected) - set(row.input_observation_dates)
+        return bool(missing) and missing <= gap_periods
 
     def _history_for_target(
         self,
@@ -253,25 +271,42 @@ class SignalEngine:
         by_date: dict[date, FeatureResult],
         *,
         frequency: str,
-    ) -> tuple[list[FeatureResult], SignalStatus | None]:
+        as_of: date | None,
+    ) -> tuple[list[FeatureResult], SignalStatus | None, list[date]]:
+        """Collect the strict trailing window, skipping only declared permanent gaps.
+
+        A period the official source confirmed it will never publish cannot be
+        waited for, so it is left out of the distribution instead of failing the
+        signal for the whole window. Nothing is imputed, every other missing or
+        failed period still fails closed, and the skipped periods are returned so
+        the result can disclose them.
+        """
         expected = [
             shift_period(target.feature_observation_date, frequency, offset)
             for offset in range(-definition.full_window, 0)
         ]
+        gap_periods = self.permanent_gaps.periods_for(definition.indicator_id, as_of=as_of)
         earliest = min(by_date) if by_date else None
         history: list[FeatureResult] = []
+        skipped: list[date] = []
         for expected_date in expected:
             row = by_date.get(expected_date)
             if row is None:
+                if expected_date in gap_periods:
+                    skipped.append(expected_date)
+                    continue
                 if earliest is not None and expected_date >= earliest:
-                    return history, SignalStatus.MISSING_FEATURE
+                    return history, SignalStatus.MISSING_FEATURE, skipped
                 continue
             if row.feature_status is not FeatureStatus.OK or row.value is None:
                 if row.feature_status is FeatureStatus.PIT_UNSAFE:
-                    return history, SignalStatus.PIT_UNSAFE
-                return history, SignalStatus.FEATURE_ERROR
+                    return history, SignalStatus.PIT_UNSAFE, skipped
+                if self._blocked_only_by_permanent_gap(row, gap_periods, frequency=frequency):
+                    skipped.append(expected_date)
+                    continue
+                return history, SignalStatus.FEATURE_ERROR, skipped
             history.append(row)
-        return history, None
+        return history, None, skipped
 
     def _result(
         self,
@@ -281,9 +316,12 @@ class SignalEngine:
         *,
         forced_status: SignalStatus | None,
         as_of: date | None,
+        skipped_gap_periods: Sequence[date] = (),
     ) -> NormalizedSignalResult:
         involved = [*history, target]
         flags = _propagated_flags(involved)
+        if skipped_gap_periods:
+            flags.add(SignalQualityFlag.PERMANENT_GAP_SKIPPED)
         status = forced_status
         if target.feature_spec_version != self.feature_catalog.feature_spec_version:
             status = SignalStatus.FEATURE_SPEC_MISMATCH
@@ -368,6 +406,14 @@ class SignalEngine:
                 revision_effect_hash=(
                     revision_effect.revision_effect_hash if revision_effect is not None else None
                 ),
+            )
+        if skipped_gap_periods:
+            # Bound only when the rule was applied, so every result that never met a
+            # declared gap keeps its existing calculation identity.
+            payload.update(
+                permanent_gap_version=self.permanent_gaps.permanent_gap_version,
+                permanent_gap_hash=self.permanent_gaps.permanent_gap_hash,
+                permanent_gap_periods=[item.isoformat() for item in skipped_gap_periods],
             )
         result = NormalizedSignalResult(
             signal_id=definition.signal_id,
@@ -471,8 +517,8 @@ class SignalEngine:
         by_date = {item.feature_observation_date: item for item in feature_rows}
         results: list[NormalizedSignalResult] = []
         for target in requested_rows:
-            history, forced_status = self._history_for_target(
-                definition, target, by_date, frequency=frequency
+            history, forced_status, skipped = self._history_for_target(
+                definition, target, by_date, frequency=frequency, as_of=date_as_of
             )
             results.append(
                 self._result(
@@ -481,6 +527,7 @@ class SignalEngine:
                     history,
                     forced_status=forced_status,
                     as_of=date_as_of,
+                    skipped_gap_periods=skipped,
                 )
             )
         self.cache.put(cache_key, results)
