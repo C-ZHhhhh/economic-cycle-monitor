@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from pydantic import ValidationError
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from agents.macro.explanation_config import hash_payload
@@ -65,7 +65,7 @@ class PersistedExplanationContextLoader:
         self.session = session
 
     def _contexts(self) -> list[PersistedExplanationContext]:
-        statement: Select[tuple[AgentReport]] = (
+        statement = (
             select(AgentReport)
             .where(AgentReport.report_type == PERSISTED_CONTEXT_REPORT_TYPE)
             .order_by(AgentReport.created_at.desc(), AgentReport.id.desc())

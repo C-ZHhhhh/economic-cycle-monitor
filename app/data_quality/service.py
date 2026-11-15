@@ -156,7 +156,7 @@ def run_database_quality_checks(
     }
     conflict_issues = [
         raw_hash_conflict_issue(
-            indicator_by_series.get(series_id),
+            indicator_by_series.get(series_id) if series_id is not None else None,
             response_path=response_path,
             hashes=list(hashes),
         )

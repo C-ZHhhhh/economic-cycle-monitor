@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data_quality.checks import QualityIssue
@@ -85,7 +85,7 @@ def list_quality_events(
     limit: int = 100,
 ) -> Sequence[DataQualityEvent]:
     """List bounded quality events for API and CLI consumers."""
-    statement: Select[tuple[DataQualityEvent]] = select(DataQualityEvent)
+    statement = select(DataQualityEvent)
     if indicator_id is not None:
         statement = statement.where(DataQualityEvent.indicator_id == indicator_id)
     if severity is not None:

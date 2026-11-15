@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.models import IndicatorRegistry
@@ -24,7 +24,7 @@ def list_indicators(
     limit: int = 100,
 ) -> Sequence[IndicatorRegistry]:
     """List indicators with bounded filtering."""
-    statement: Select[tuple[IndicatorRegistry]] = select(IndicatorRegistry)
+    statement = select(IndicatorRegistry)
     if module is not None:
         statement = statement.where(IndicatorRegistry.module == module)
     if enabled is not None:

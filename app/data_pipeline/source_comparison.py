@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.data_pipeline.repository import finish_sync_run, start_sync_run
@@ -161,7 +161,7 @@ class SourceComparisonService:
     def _date_page(
         self, indicator_id: str, options: SourceComparisonOptions, offset: int
     ) -> list[date]:
-        statement: Select[tuple[date]] = (
+        statement = (
             select(RawObservation.observation_date)
             .where(
                 RawObservation.indicator_id == indicator_id,
@@ -477,7 +477,7 @@ def list_source_comparisons(
     limit: int = 100,
 ) -> list[SourceComparisonResult]:
     """Return a bounded newest-first comparison page."""
-    statement: Select[tuple[SourceComparisonResult]] = select(SourceComparisonResult)
+    statement = select(SourceComparisonResult)
     if indicator_id is not None:
         statement = statement.where(SourceComparisonResult.indicator_id == indicator_id)
     if comparison_status is not None:
