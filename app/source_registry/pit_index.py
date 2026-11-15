@@ -263,17 +263,31 @@ async def refresh_change_index(
     refresh_start = prior.index_complete_through.fromordinal(
         prior.index_complete_through.toordinal() + 1
     )
+    prior_dates = tuple(date.fromisoformat(item) for item in prior.change_dates_json)
+    # The provider answers a range that holds no vintage date with a server error,
+    # not an empty page, so "nothing new" is indistinguishable from an outage. Asking
+    # from the last change date already proven makes every answer non-empty: that
+    # date must come back, and whatever follows it is the increment.
+    anchor = prior_dates[-1] if prior_dates else None
     delta, payloads = await discover_change_index(
         client,
         indicator_id=prior.indicator_id,
         provider_series_id=prior.provider_series_id,
-        coverage_start=refresh_start,
+        coverage_start=anchor if anchor is not None else prior.index_coverage_start,
         coverage_end=coverage_end,
         source_registry_hash=source_registry_hash,
         materialization=materialization,
     )
-    prior_dates = tuple(date.fromisoformat(item) for item in prior.change_dates_json)
-    combined_dates = (*prior_dates, *delta.change_dates)
+    if anchor is not None and (not delta.change_dates or delta.change_dates[0] != anchor):
+        raise ChangeIndexMalformed("PIT_CHANGE_INDEX_MALFORMED:REFRESH_ANCHOR_MISSING")
+    if any(item <= prior.index_complete_through for item in delta.change_dates if item != anchor):
+        # A date inside the interval the prior generation proved complete would
+        # rewrite old evidence; that needs a fresh full discovery, not a refresh.
+        raise ChangeIndexMalformed("PIT_CHANGE_INDEX_MALFORMED:REFRESH_REWRITES_PROVEN_INTERVAL")
+    combined_dates = (
+        *prior_dates,
+        *(item for item in delta.change_dates if item > prior.index_complete_through),
+    )
     if tuple(sorted(set(combined_dates))) != combined_dates:
         raise ChangeIndexMalformed("PIT_CHANGE_INDEX_MALFORMED:REFRESH_OVERLAP")
     prior_pages = tuple(
@@ -303,6 +317,7 @@ async def refresh_change_index(
         "pit_materialization_spec_hash": materialization.specification_hash,
         "refresh_parent_generation_hash": prior.generation_hash,
         "refresh_interval": [refresh_start, coverage_end],
+        "refresh_anchor": anchor,
     }
     return (
         ChangeIndexDiscovery(

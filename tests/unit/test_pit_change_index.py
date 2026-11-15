@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.data_sources.fred.schemas import FredPayload, FredVintageDatePage
+from app.database.models import PitChangeIndexGeneration
 from app.source_registry.materialization import load_pit_materialization_catalog
 from app.source_registry.pit_index import (
     ChangeIndexDiscovery,
@@ -156,12 +157,8 @@ def test_precise_invalidation_intervals() -> None:
     ) == [(date(2020, 2, 1), date(2020, 3, 1))]
 
 
-@pytest.mark.asyncio
-async def test_incremental_refresh_creates_combined_immutable_generation() -> None:
-    materialization = load_pit_materialization_catalog()
-    from app.database.models import PitChangeIndexGeneration
-
-    prior = PitChangeIndexGeneration(
+def _prior_generation(change_dates: list[str]) -> PitChangeIndexGeneration:
+    return PitChangeIndexGeneration(
         indicator_id="US_TEST",
         provider="ALFRED_VINTAGE",
         provider_series_id="TEST",
@@ -169,16 +166,16 @@ async def test_incremental_refresh_creates_combined_immutable_generation() -> No
         index_coverage_start=date(2000, 1, 1),
         index_coverage_end=date(2020, 2, 29),
         index_complete_through=date(2020, 2, 29),
-        provider_count=2,
-        retrieved_count=2,
+        provider_count=len(change_dates),
+        retrieved_count=len(change_dates),
         page_count=1,
-        change_dates_json=["2020-01-01", "2020-02-01"],
+        change_dates_json=change_dates,
         pagination_evidence_json=[
             {
-                "count": 2,
+                "count": len(change_dates),
                 "offset": 0,
                 "limit": 10_000,
-                "retrieved": 2,
+                "retrieved": len(change_dates),
                 "response_hash": "a" * 64,
                 "from_cache": False,
             }
@@ -186,25 +183,45 @@ async def test_incremental_refresh_creates_combined_immutable_generation() -> No
         generation_hash="b" * 64,
         source_registry_hash="r" * 64,
         pit_materialization_spec_version="pit-materialization-v2",
-        pit_materialization_spec_hash=materialization.specification_hash,
+        pit_materialization_spec_hash=load_pit_materialization_catalog().specification_hash,
         discovered_at=datetime(2026, 8, 31, tzinfo=UTC),
     )
+
+
+def _refresh_client(vintage_dates: list[date]) -> AsyncMock:
     client = AsyncMock()
     client.get_vintage_date_page.return_value = (
         FredVintageDatePage(
-            count=1,
-            offset=0,
-            limit=10_000,
-            vintage_dates=[date(2020, 3, 1)],
+            count=len(vintage_dates), offset=0, limit=10_000, vintage_dates=vintage_dates
         ),
         _payload("c" * 64),
     )
+    return client
+
+
+async def _refresh(
+    client: AsyncMock, prior: PitChangeIndexGeneration, coverage_end: date
+) -> ChangeIndexDiscovery:
+    discovery, _ = await refresh_change_index(
+        client,
+        prior=prior,
+        coverage_end=coverage_end,
+        source_registry_hash="r" * 64,
+        materialization=load_pit_materialization_catalog(),
+    )
+    return discovery
+
+
+@pytest.mark.asyncio
+async def test_incremental_refresh_creates_combined_immutable_generation() -> None:
+    prior = _prior_generation(["2020-01-01", "2020-02-01"])
+    client = _refresh_client([date(2020, 2, 1), date(2020, 3, 1)])
     discovery, payloads = await refresh_change_index(
         client,
         prior=prior,
         coverage_end=date(2020, 3, 31),
         source_registry_hash="r" * 64,
-        materialization=materialization,
+        materialization=load_pit_materialization_catalog(),
     )
     assert prior.change_dates_json == ["2020-01-01", "2020-02-01"]
     assert discovery.change_dates == (
@@ -212,13 +229,61 @@ async def test_incremental_refresh_creates_combined_immutable_generation() -> No
         date(2020, 2, 1),
         date(2020, 3, 1),
     )
+    assert discovery.provider_count == 3
     assert discovery.complete_through == date(2020, 3, 31)
     assert discovery.generation_hash != prior.generation_hash
     assert len(payloads) == 1
+    # The request starts at the last proven change date, never at an interval that
+    # may hold no vintage date: the provider answers an empty range with an error.
     client.get_vintage_date_page.assert_awaited_once_with(
         "TEST",
-        realtime_start=date(2020, 3, 1),
+        realtime_start=date(2020, 2, 1),
         realtime_end=date(2020, 3, 31),
         limit=10_000,
         offset=0,
     )
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_no_new_vintage_only_advances_the_watermark() -> None:
+    prior = _prior_generation(["2020-01-01", "2020-02-01"])
+    client = _refresh_client([date(2020, 2, 1)])
+    discovery = await _refresh(client, prior, date(2020, 3, 1))
+    assert discovery.change_dates == (date(2020, 1, 1), date(2020, 2, 1))
+    assert discovery.provider_count == 2
+    assert discovery.complete_through == date(2020, 3, 1)
+    assert discovery.generation_hash != prior.generation_hash
+
+
+@pytest.mark.asyncio
+async def test_refresh_fails_closed_when_the_proven_anchor_is_not_returned() -> None:
+    prior = _prior_generation(["2020-01-01", "2020-02-01"])
+    with pytest.raises(ChangeIndexMalformed, match="REFRESH_ANCHOR_MISSING"):
+        await _refresh(_refresh_client([date(2020, 3, 1)]), prior, date(2020, 3, 31))
+    with pytest.raises(ChangeIndexMalformed, match="REFRESH_ANCHOR_MISSING"):
+        await _refresh(_refresh_client([]), prior, date(2020, 3, 31))
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_a_date_inside_the_interval_already_proven_complete() -> None:
+    prior = _prior_generation(["2020-01-01", "2020-02-01"])
+    client = _refresh_client([date(2020, 2, 1), date(2020, 2, 20), date(2020, 3, 1)])
+    with pytest.raises(ChangeIndexMalformed, match="REFRESH_REWRITES_PROVEN_INTERVAL"):
+        await _refresh(client, prior, date(2020, 3, 31))
+
+
+@pytest.mark.asyncio
+async def test_refresh_without_any_proven_date_asks_from_the_coverage_start() -> None:
+    prior = _prior_generation([])
+    client = _refresh_client([date(2020, 3, 1)])
+    discovery = await _refresh(client, prior, date(2020, 3, 31))
+    assert discovery.change_dates == (date(2020, 3, 1),)
+    client.get_vintage_date_page.assert_awaited_once_with(
+        "TEST",
+        realtime_start=date(2000, 1, 1),
+        realtime_end=date(2020, 3, 31),
+        limit=10_000,
+        offset=0,
+    )
+    with pytest.raises(ChangeIndexMalformed, match="REFRESH_REWRITES_PROVEN_INTERVAL"):
+        await _refresh(_refresh_client([date(2020, 2, 10)]), prior, date(2020, 3, 31))
