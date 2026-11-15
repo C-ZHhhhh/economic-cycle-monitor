@@ -71,6 +71,18 @@ class StubCurrentRefreshRunner(CurrentRefreshRunner):
         self.comparison_success = comparison_success
         self.current_ready = current_ready
         self.calls: list[tuple[str, SourceSystem, CurrentSourceRole]] = []
+        self.holes: set[str] = set()
+        self.realign_succeeds = True
+        self.realigned: list[str] = []
+
+    def _primary_history_has_holes(self, policy: SourceRegistryPolicy) -> bool:
+        return policy.indicator_id in self.holes
+
+    async def _realign_full_history(self, policy: SourceRegistryPolicy) -> bool:
+        self.realigned.append(policy.indicator_id)
+        if self.realign_succeeds:
+            self.comparison_success = True
+        return self.realign_succeeds
 
     async def _refresh_provider(
         self,
@@ -224,3 +236,65 @@ def test_alfred_is_rejected_as_a_current_source() -> None:
     runner.settings = cast(Any, object())
     with pytest.raises(ValueError, match="not a current-compatible source"):
         runner._require_enabled(SourceSystem.ALFRED_VINTAGE)
+
+
+@pytest.mark.asyncio
+async def test_revision_conflict_is_left_alone_unless_realignment_is_requested() -> None:
+    runner = StubCurrentRefreshRunner(comparison_success=False)
+    result = await runner.run(CurrentRefreshRequest(indicator_ids=[ISSUE17_INDICATORS[0]]))
+
+    assert runner.realigned == []
+    assert result.realigned_indicator_ids == []
+    assert result.status == "partial"
+
+
+@pytest.mark.asyncio
+async def test_revision_conflict_triggers_full_history_realignment_and_recomparison() -> None:
+    runner = StubCurrentRefreshRunner(comparison_success=False)
+    result = await runner.run(
+        CurrentRefreshRequest(indicator_ids=[ISSUE17_INDICATORS[0]], realign_on_conflict=True)
+    )
+
+    assert runner.realigned == [ISSUE17_INDICATORS[0]]
+    assert result.realigned_indicator_ids == [ISSUE17_INDICATORS[0]]
+    assert result.comparisons[0].success
+    assert result.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_failed_realignment_keeps_the_conflict_and_fails_closed() -> None:
+    runner = StubCurrentRefreshRunner(comparison_success=False)
+    runner.realign_succeeds = False
+    result = await runner.run(
+        CurrentRefreshRequest(indicator_ids=[ISSUE17_INDICATORS[0]], realign_on_conflict=True)
+    )
+
+    assert runner.realigned == [ISSUE17_INDICATORS[0]]
+    assert result.realigned_indicator_ids == []
+    assert result.comparisons[0].counts == {"source_value_conflict": 1}
+    assert result.status == "partial"
+
+
+@pytest.mark.asyncio
+async def test_interior_history_holes_trigger_realignment_without_a_conflict() -> None:
+    runner = StubCurrentRefreshRunner()
+    runner.holes = {ISSUE17_INDICATORS[1]}
+    result = await runner.run(
+        CurrentRefreshRequest(indicator_ids=ISSUE17_INDICATORS, realign_on_conflict=True)
+    )
+
+    assert runner.realigned == [ISSUE17_INDICATORS[1]]
+    assert result.realigned_indicator_ids == [ISSUE17_INDICATORS[1]]
+    assert result.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_never_realigns() -> None:
+    runner = StubCurrentRefreshRunner(comparison_success=False)
+    await runner.run(
+        CurrentRefreshRequest(
+            indicator_ids=[ISSUE17_INDICATORS[0]], dry_run=True, realign_on_conflict=True
+        )
+    )
+
+    assert runner.realigned == []

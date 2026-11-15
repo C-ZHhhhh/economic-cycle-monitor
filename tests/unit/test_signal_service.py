@@ -221,6 +221,131 @@ async def test_missing_intermediate_feature_period_fails_closed() -> None:
     assert result.normalized_value is None
 
 
+def _through(feature_id: str, last: date, *, as_of: date | None = None) -> list[FeatureResult]:
+    """Monthly rows from 2019-01 through ``last`` with no row for October 2025."""
+    rows: list[FeatureResult] = []
+    current = date(2019, 1, 1)
+    index = 0
+    while current <= last:
+        if current != date(2025, 10, 1):
+            rows.append(_row(feature_id, current, Decimal(index), as_of=as_of))
+        current += relativedelta(months=1)
+        index += 1
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_declared_permanent_gap_is_skipped_without_imputation() -> None:
+    feature_id = "US_UNEMPLOYMENT_RATE__LEVEL"
+    engine, _ = _engine(_through(feature_id, date(2026, 7, 1)))
+    result = (await engine.compute_feature_signals(feature_id, date(2026, 7, 1), date(2026, 7, 1)))[
+        0
+    ]
+    assert result.signal_status is SignalStatus.OK
+    assert result.history_count == 59
+    assert SignalQualityFlag.PERMANENT_GAP_SKIPPED in result.quality_flags
+    assert SignalQualityFlag.PARTIAL_WINDOW in result.quality_flags
+
+
+@pytest.mark.asyncio
+async def test_same_missing_month_still_fails_for_an_undeclared_indicator() -> None:
+    feature_id = "US_SAVING_RATE__LEVEL"
+    engine, _ = _engine(_through(feature_id, date(2026, 7, 1)))
+    result = (await engine.compute_feature_signals(feature_id, date(2026, 7, 1), date(2026, 7, 1)))[
+        0
+    ]
+    assert result.signal_status is SignalStatus.MISSING_FEATURE
+    assert SignalQualityFlag.PERMANENT_GAP_SKIPPED not in result.quality_flags
+
+
+@pytest.mark.asyncio
+async def test_history_features_blocked_only_by_the_declared_gap_are_skipped() -> None:
+    feature_id = "US_PARTICIPATION_RATE__CHANGE_3M_PP"
+    rows = _through(feature_id, date(2026, 7, 1))
+    blocked = date(2026, 1, 1)
+    rows = [
+        item.model_copy(
+            update={
+                "value": None,
+                "feature_status": FeatureStatus.MISSING_INPUT_PERIOD,
+                "input_observation_dates": [date(2025, 11, 1), date(2025, 12, 1), blocked],
+            }
+        )
+        if item.feature_observation_date == blocked
+        else item
+        for item in rows
+    ]
+    engine, _ = _engine(rows)
+    result = (await engine.compute_feature_signals(feature_id, date(2026, 7, 1), date(2026, 7, 1)))[
+        0
+    ]
+    assert result.signal_status is SignalStatus.OK
+    assert SignalQualityFlag.PERMANENT_GAP_SKIPPED in result.quality_flags
+
+
+@pytest.mark.asyncio
+async def test_history_feature_missing_an_undeclared_period_still_fails_closed() -> None:
+    feature_id = "US_PARTICIPATION_RATE__CHANGE_3M_PP"
+    rows = _through(feature_id, date(2026, 7, 1))
+    blocked = date(2024, 6, 1)
+    rows = [
+        item.model_copy(
+            update={
+                "value": None,
+                "feature_status": FeatureStatus.MISSING_INPUT_PERIOD,
+                "input_observation_dates": [date(2024, 4, 1), date(2024, 5, 1), blocked],
+            }
+        )
+        if item.feature_observation_date == blocked
+        else item
+        for item in rows
+    ]
+    engine, _ = _engine(rows)
+    result = (await engine.compute_feature_signals(feature_id, date(2026, 7, 1), date(2026, 7, 1)))[
+        0
+    ]
+    assert result.signal_status is SignalStatus.FEATURE_ERROR
+
+
+@pytest.mark.asyncio
+async def test_pit_evaluation_before_the_gap_was_confirmed_does_not_skip_it() -> None:
+    feature_id = "US_UNEMPLOYMENT_RATE__LEVEL"
+    early = date(2025, 12, 1)
+    engine, _ = _engine(_through(feature_id, date(2025, 11, 1), as_of=early))
+    before = (
+        await engine.compute_feature_signals(
+            feature_id, date(2025, 11, 1), date(2025, 11, 1), early
+        )
+    )[0]
+    assert before.signal_status is SignalStatus.MISSING_FEATURE
+
+    later = date(2026, 1, 15)
+    engine, _ = _engine(_through(feature_id, date(2025, 12, 1), as_of=later))
+    after = (
+        await engine.compute_feature_signals(
+            feature_id, date(2025, 12, 1), date(2025, 12, 1), later
+        )
+    )[0]
+    assert after.signal_status is SignalStatus.OK
+    assert SignalQualityFlag.PERMANENT_GAP_SKIPPED in after.quality_flags
+
+
+@pytest.mark.asyncio
+async def test_results_that_never_meet_a_gap_keep_their_calculation_identity() -> None:
+    feature_id = "US_UNEMPLOYMENT_RATE__LEVEL"
+    rows = _monthly(feature_id, 61)
+    target = rows[-1].feature_observation_date
+    declared, _ = _engine(rows)
+    empty = declared.permanent_gaps.model_copy(update={"gaps": [], "permanent_gap_hash": "0" * 64})
+    undeclared = SignalEngine(
+        Session(), feature_engine=FakeFeatureEngine(rows), permanent_gaps=empty
+    )
+    first = (await declared.compute_feature_signals(feature_id, target, target))[0]
+    second = (await undeclared.compute_feature_signals(feature_id, target, target))[0]
+    assert first.signal_status is SignalStatus.OK
+    assert first.calculation_hash == second.calculation_hash
+
+
 @pytest.mark.asyncio
 async def test_feature_error_and_pit_unsafe_fail_closed() -> None:
     feature_id = "US_SAVING_RATE__LEVEL"

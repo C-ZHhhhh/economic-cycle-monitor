@@ -1,0 +1,109 @@
+schema_version: "1.0.0"
+report_glossary_version: us-macro-report-zh-v1
+
+# Presentation-only wording for the visual report. Nothing here feeds a
+# calculation: names and one-line explanations are looked up by stable ID.
+
+# Absolute reference shown beside the relative inflation score.
+inflation_target_percent: "2.0"
+inflation_target_label: 美联储目标 2%
+# A report rendered from a snapshot older than this many days carries a warning.
+stale_after_days: 7
+# Pillar shown signal by signal in the employment section.
+labor_pillar_id: US_MACRO__LABOR_STRENGTH
+
+sources:
+  fred: FRED
+  bls: 劳工统计局
+  bea: 经济分析局
+  census: 人口普查局
+  federal_reserve: 美联储
+  dol: 劳工部
+
+pillars:
+  US_MACRO__REAL_ACTIVITY_AND_DEMAND: {name: 实体活动与需求, what: GDP、消费、收入和零售，反映经济总体的冷热}
+  US_MACRO__LABOR_STRENGTH: {name: 劳动力市场, what: 就业、失业、招聘和离职，反映找工作的难易}
+  US_MACRO__MANUFACTURING_AND_INVESTMENT: {name: 制造与投资, what: 工厂开工和企业买设备的意愿}
+  US_MACRO__HOUSING_STRENGTH: {name: 住房, what: 新屋开工和建筑许可，对利率最敏感}
+  US_MACRO__INFLATION_PRESSURE: {name: 通胀压力, what: 消费价格、生产价格和工资的上涨速度}
+  US_MACRO__HOUSEHOLD_FINANCIAL_CUSHION: {name: 家庭财务缓冲, what: 居民储蓄率。越低说明家庭手头越紧}
+  US_MACRO__CREDIT_USAGE_PRESSURE: {name: 信贷使用压力, what: 消费信贷和信用卡余额的增速}
+  US_MACRO__INVENTORY_ABSORPTION_STRENGTH: {name: 库存消化能力, what: 库存销售比的反面。越高说明货卖得越快}
+  US_MACRO__INVENTORY_ACCUMULATION_PRESSURE: {name: 库存累积压力, what: 企业库存的增速。越高说明货在堆积}
+
+indicators:
+  US_REAL_GDP: {name: 实际 GDP, what: 扣除物价后的经济总产出}
+  US_REAL_PCE: {name: 实际个人消费, what: 扣除物价后居民花了多少钱}
+  US_REAL_DISPOSABLE_INCOME: {name: 实际可支配收入, what: 扣除物价和税后居民手里的收入}
+  US_REAL_RETAIL_SALES: {name: 实际零售销售, what: 扣除物价后商店卖出的货}
+  US_INDUSTRIAL_PRODUCTION: {name: 工业产出, what: 工厂、矿山和公用事业的产量}
+  US_MANUFACTURING_CAPACITY: {name: 制造业产能利用率, what: 工厂设备实际开动的比例}
+  US_MANUFACTURING_HOURS: {name: 制造业周工时, what: 工厂工人每周工作的小时数。企业通常先调工时再招人或裁人}
+  US_DURABLE_GOODS_ORDERS: {name: 耐用品订单, what: 汽车、机器等能用三年以上商品的新订单}
+  US_CORE_CAPITAL_GOODS_ORDERS: {name: 核心资本品订单, what: 企业订购机器设备的金额（不含飞机和军品），反映投资意愿}
+  US_HOUSING_STARTS: {name: 新屋开工, what: 新开工的住宅数量。盖房子对利率最敏感}
+  US_BUILDING_PERMITS: {name: 建筑许可, what: 获批准备开工的住宅数量，比开工更早}
+  US_NONFARM_EMPLOYMENT: {name: 非农就业人数, what: 企业和政府雇了多少人}
+  US_UNEMPLOYMENT_RATE: {name: 失业率, what: 想工作的人里找不到工作的比例}
+  US_U6_RATE: {name: U6 广义失业率, what: 把被迫打零工和放弃找工作的人也算进去的失业率}
+  US_PARTICIPATION_RATE: {name: 劳动参与率, what: 成年人里在工作或在找工作的比例}
+  US_EMPLOYMENT_POP_RATIO: {name: 就业人口比, what: 成年人里有工作的比例}
+  US_INITIAL_CLAIMS: {name: 首次申领失业金, what: 每周新申请失业救济的人数，是裁员的即时信号}
+  US_CONTINUING_CLAIMS: {name: 持续申领失业金, what: 仍在领失业救济的人数，反映失业后多久能再就业}
+  US_JOB_OPENINGS: {name: 职位空缺, what: 企业挂出来还没招到人的岗位数}
+  US_HIRES: {name: 招聘率, what: 每月新招员工占就业人数的比例}
+  US_QUITS: {name: 主动离职率, what: 每月主动辞职的比例。大家越敢跳槽，说明工作越好找}
+  US_TEMP_HELP_EMPLOYMENT: {name: 临时工就业, what: 临时雇佣的人数。企业通常最先增减临时工}
+  US_AVERAGE_HOURLY_EARNINGS: {name: 平均时薪, what: 普通员工每小时的工资}
+  US_CPI: {name: CPI, what: 居民一篮子消费品的价格}
+  US_CORE_CPI: {name: 核心 CPI, what: 去掉食品和能源后的 CPI}
+  US_PCE_PRICE: {name: PCE 物价, what: 美联储最看重的消费物价指标}
+  US_CORE_PCE_PRICE: {name: 核心 PCE 物价, what: 去掉食品和能源后的 PCE 物价}
+  US_PPI_COMMODITIES: {name: 生产者价格 PPI, what: 企业出厂和原材料的价格，在消费价格的上游}
+  US_SAVING_RATE: {name: 个人储蓄率, what: 居民收入里没花掉的比例}
+  US_CONSUMER_CREDIT: {name: 消费信贷, what: 居民借的车贷、学贷和信用卡等}
+  US_REVOLVING_CREDIT: {name: 循环信贷, what: 主要是信用卡余额}
+  US_INVENTORY_SALES_RATIO: {name: 库存销售比, what: 按现在的销售速度，库存够卖几个月}
+  US_BUSINESS_INVENTORIES: {name: 企业库存, what: 企业仓库里的货值}
+
+# Plain wording for each formula a signal is built from.
+transforms:
+  MA3_BLOCK_GROWTH_ANNUALIZED: 3 个月均值的年化增速
+  GROWTH_3M_ANNUALIZED: 近 3 个月年化增速
+  GROWTH_QOQ_ANNUALIZED: 季度环比年化
+  INFLATION_3M_ANNUALIZED: 近 3 个月年化涨幅
+  INFLATION_YOY: 同比涨幅
+  GROWTH_YOY: 同比增速
+  CHANGE_3M_PP: 3 个月变化
+  CHANGE_1M: 单月增量
+  MA_4W: 4 周均值
+  MA_3M: 3 个月均值
+  LEVEL: 水平
+
+# One sentence per base regime: what the combination means in plain words.
+regimes:
+  WEAK|LOW_PRESSURE: 经济偏冷，物价压力也小。需求不足是主要矛盾。
+  WEAK|NEUTRAL_PRESSURE: 经济偏冷，物价压力正常。
+  WEAK|HIGH_PRESSURE: 经济偏冷，物价压力却偏高。这是最难处理的组合，俗称滞胀。
+  NEUTRAL|LOW_PRESSURE: 经济不冷不热，物价压力小。
+  NEUTRAL|NEUTRAL_PRESSURE: 经济不冷不热，物价压力也正常。
+  NEUTRAL|HIGH_PRESSURE: 经济不冷不热，但物价压力比常态高。
+  STRONG|LOW_PRESSURE: 经济偏热，物价压力却小。这是最舒服的组合。
+  STRONG|NEUTRAL_PRESSURE: 经济偏热，物价压力正常。
+  STRONG|HIGH_PRESSURE: 经济偏热，物价压力也偏高，有过热的迹象。
+
+# Raw series shown as small charts: [indicator, display transform, unit, decimals].
+small_multiples:
+  - {indicator_id: US_UNEMPLOYMENT_RATE, transform: level, unit: "%", decimals: 1}
+  - {indicator_id: US_JOB_OPENINGS, transform: level, scale: "0.001", unit: 百万个, decimals: 2}
+  - {indicator_id: US_QUITS, transform: level, unit: "%", decimals: 1}
+  - {indicator_id: US_INITIAL_CLAIMS, transform: four_week_mean, scale: "0.001", unit: 千人，4 周均值, decimals: 0}
+  - {indicator_id: US_HOUSING_STARTS, transform: level, unit: 千套/年, decimals: 0}
+  - {indicator_id: US_CORE_CAPITAL_GOODS_ORDERS, transform: level, scale: "0.001", unit: 十亿美元, decimals: 1}
+  - {indicator_id: US_AVERAGE_HOURLY_EARNINGS, transform: yoy, unit: "% 同比", decimals: 2}
+  - {indicator_id: US_SAVING_RATE, transform: level, unit: "%", decimals: 1}
+
+# Price indexes shown as year-over-year change beside the target line.
+absolute_inflation:
+  - {indicator_id: US_PCE_PRICE, label: PCE}
+  - {indicator_id: US_CORE_PCE_PRICE, label: 核心 PCE}

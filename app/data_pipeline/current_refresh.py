@@ -14,8 +14,12 @@ from app.data_pipeline.census_service import CensusPipelineService
 from app.data_pipeline.dol_service import DolPipelineService
 from app.data_pipeline.fed_service import FederalReservePipelineService
 from app.data_pipeline.schemas import (
+    BackfillOptions,
+    BeaBackfillOptions,
     BeaSyncOptions,
+    BlsBackfillOptions,
     BlsSyncOptions,
+    CensusBackfillOptions,
     CensusSyncOptions,
     PipelineSelection,
     SourceComparisonOptions,
@@ -32,9 +36,11 @@ from app.data_sources.federal_reserve.factory import create_federal_reserve_clie
 from app.data_sources.fred.factory import create_fred_client
 from app.database.models import RawObservation
 from app.database.session import db_session
+from app.features.formulas import shift_period
 from app.settings import Settings
 from app.source_registry.config import load_source_registry, storage_source_name
 from app.source_registry.health import indicator_source_health
+from app.source_registry.permanent_gaps import load_permanent_gap_catalog
 from app.source_registry.readiness import validate_data_layer
 from app.source_registry.schemas import (
     HealthSnapshot,
@@ -54,6 +60,7 @@ class CurrentRefreshRequest(BaseModel):
 
     indicator_ids: list[str] = Field(min_length=1)
     dry_run: bool = False
+    realign_on_conflict: bool = False
 
     @field_validator("indicator_ids")
     @classmethod
@@ -129,6 +136,7 @@ class CurrentRefreshResult(BaseModel):
     comparisons: list[CurrentSourceComparisonResult]
     indicator_states: list[CurrentIndicatorRefreshState]
     final_readiness: ReadinessStatus
+    realigned_indicator_ids: list[str] = Field(default_factory=list)
 
 
 _FATAL_COMPARISON_STATUSES = {
@@ -152,6 +160,7 @@ class CurrentRefreshRunner:
         self.engine = engine
         self.settings = settings
         self.registry = registry or load_source_registry()
+        self.permanent_gaps = load_permanent_gap_catalog(source_registry=self.registry)
 
     async def run(self, request: CurrentRefreshRequest) -> CurrentRefreshResult:
         """Refresh only requested current sources, each in its own transaction."""
@@ -176,6 +185,23 @@ class CurrentRefreshRunner:
             if policy.fallback_source is SourceSystem.FRED_CURRENT
             and policy.primary_source is not SourceSystem.FRED_CURRENT
         ]
+        realigned: list[str] = []
+        if request.realign_on_conflict and not request.dry_run:
+            comparison_index = {item.indicator_id: index for index, item in enumerate(comparisons)}
+            for policy in policies:
+                index = comparison_index.get(policy.indicator_id)
+                conflicted = index is not None and bool(
+                    comparisons[index].counts.get("source_value_conflict")
+                )
+                if not conflicted and not self._primary_history_has_holes(policy):
+                    continue
+                if not await self._realign_full_history(policy):
+                    continue
+                realigned.append(policy.indicator_id)
+                if index is not None:
+                    comparisons[index] = self._compare_current_sources(
+                        policy, by_indicator_and_source, request.dry_run
+                    )
         states, readiness = self._inspect_final_state(policies)
         provider_successes = sum(item.success for item in provider_results)
         failures = sum(not item.success for item in provider_results) + sum(
@@ -197,6 +223,7 @@ class CurrentRefreshRunner:
             comparisons=comparisons,
             indicator_states=states,
             final_readiness=readiness,
+            realigned_indicator_ids=realigned,
         )
 
     def _select_policies(self, indicator_ids: Sequence[str]) -> list[SourceRegistryPolicy]:
@@ -290,6 +317,120 @@ class CurrentRefreshRunner:
             async with create_dol_client(self.settings) as client:
                 return await DolPipelineService(session, self.settings, client).sync(
                     PipelineSelection(indicator_id=indicator_id), dry_run=dry_run
+                )
+        raise ValueError("ALFRED vintage is not a current-compatible source")
+
+    def _primary_history_has_holes(self, policy: SourceRegistryPolicy) -> bool:
+        """Return whether stored primary history skips a native period.
+
+        Incremental syncs fetch only the newest periods, so a long pause between
+        runs leaves interior holes that make every feature spanning them fail.
+        Periods declared in the permanent-gap authority are not holes.
+        """
+        storage_source = storage_source_name(policy.primary_source.value)
+        with db_session(self.engine) as session:
+            stored = set(
+                session.scalars(
+                    select(RawObservation.observation_date).where(
+                        RawObservation.indicator_id == policy.indicator_id,
+                        RawObservation.source == storage_source,
+                    )
+                )
+            )
+        if len(stored) < 2:
+            return False
+        frequency = policy.canonical.frequency
+        declared = self.permanent_gaps.periods_for(policy.indicator_id)
+        cursor, last = min(stored), max(stored)
+        while cursor < last:
+            if cursor not in stored and cursor not in declared:
+                return True
+            cursor = shift_period(cursor, frequency, 1)
+        return False
+
+    async def _realign_full_history(self, policy: SourceRegistryPolicy) -> bool:
+        """Re-fetch both sources' full history after a revision-window mismatch.
+
+        Incremental syncs only look back a bounded window. When a provider
+        republishes older history (annual or benchmark revisions), the primary and
+        the fallback can each hold a different vintage of periods outside the
+        other's window. Fetching both histories in full puts them on the same
+        published vintage; the comparison that follows decides whether any real
+        conflict remains.
+        """
+        sources = [policy.primary_source]
+        if policy.fallback_source is not None:
+            sources.append(policy.fallback_source)
+        for source in sources:
+            try:
+                self._require_enabled(source)
+                with db_session(self.engine) as session:
+                    summary = await self._backfill_in_session(session, source, policy.indicator_id)
+            except Exception:
+                return False
+            if summary.status != "succeeded" or summary.failure_count:
+                return False
+        return True
+
+    async def _backfill_in_session(
+        self, session: Session, source: SourceSystem, indicator_id: str
+    ) -> SyncSummary:
+        today = date.today()
+        settings = self.settings
+        if source is SourceSystem.FRED_CURRENT:
+            uncached = settings.model_copy(update={"fred_cache_enabled": False})
+            async with create_fred_client(uncached) as client:
+                return await FredPipelineService(session, uncached, client).backfill(
+                    BackfillOptions(
+                        indicator_id=indicator_id,
+                        start=settings.fred_default_backfill_start,
+                        end=today,
+                        force=True,
+                    )
+                )
+        if source is SourceSystem.BLS:
+            async with create_bls_client(settings) as client:
+                return await BlsPipelineService(session, settings, client).backfill(
+                    BlsBackfillOptions(
+                        indicator_id=indicator_id,
+                        start_year=settings.bls_default_backfill_start_year,
+                        end_year=today.year,
+                    )
+                )
+        if source is SourceSystem.BEA:
+            async with create_bea_client(settings) as client:
+                return await BeaPipelineService(session, settings, client).backfill(
+                    BeaBackfillOptions(
+                        indicator_id=indicator_id,
+                        start_year=settings.bea_default_backfill_start_year,
+                        end_year=today.year,
+                    )
+                )
+        if source is SourceSystem.CENSUS:
+            async with create_census_client(settings) as client:
+                return await CensusPipelineService(session, settings, client).backfill(
+                    CensusBackfillOptions(
+                        indicator_id=indicator_id,
+                        start=date(settings.census_default_backfill_start_year, 1, 1),
+                    )
+                )
+        if source is SourceSystem.FEDERAL_RESERVE:
+            async with create_federal_reserve_client(settings) as client:
+                return await FederalReservePipelineService(session, settings, client).backfill(
+                    BackfillOptions(
+                        indicator_id=indicator_id,
+                        start=settings.fred_default_backfill_start,
+                        end=today,
+                    )
+                )
+        if source is SourceSystem.DOL:
+            async with create_dol_client(settings) as client:
+                return await DolPipelineService(session, settings, client).backfill(
+                    BackfillOptions(
+                        indicator_id=indicator_id,
+                        start=settings.fred_default_backfill_start,
+                        end=today,
+                    )
                 )
         raise ValueError("ALFRED vintage is not a current-compatible source")
 

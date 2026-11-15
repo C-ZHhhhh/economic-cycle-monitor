@@ -1,0 +1,46 @@
+schema_version: "1.0.0"
+permanent_gap_version: permanent-gaps-v1
+required_source_registry_version: stage2b5-v3
+required_source_registry_hash: 7a13095907733a1d6092ef5231c67de7528886c7eda9eeb73ed2166764834758
+
+# Observation periods an official source has confirmed it will never publish.
+# A declared period is skipped when it falls inside a trailing normalization
+# window. No value is interpolated, carried forward, or otherwise invented, and a
+# feature whose own formula needs the missing period still fails closed.
+gaps:
+  - gap_id: US_2025_10_LAPSE_HOUSEHOLD_SURVEY
+    observation_period: 2025-10-01
+    indicator_ids:
+      - US_UNEMPLOYMENT_RATE
+      - US_U6_RATE
+      - US_PARTICIPATION_RATE
+      - US_EMPLOYMENT_POP_RATIO
+    reason: >-
+      The Current Population Survey was not collected for October 2025 during the
+      lapse in federal appropriations and will not be collected retroactively.
+    official_source_url: https://www.bls.gov/news.release/archives/empsit_12162025.pdf
+    known_since: 2025-12-16
+    verified_at: 2026-11-14
+
+  - gap_id: US_2025_10_LAPSE_CPI
+    observation_period: 2025-10-01
+    indicator_ids:
+      - US_CPI
+      - US_CORE_CPI
+    reason: >-
+      BLS did not collect CPI data from 2025-10-01 through 2025-11-12 and did not
+      publish October 2025 indexes for these series.
+    official_source_url: https://www.bls.gov/cpi/additional-resources/2025-federal-government-shutdown-impact-cpi.htm
+    known_since: 2025-12-18
+    verified_at: 2026-11-14
+
+  - gap_id: US_2025_10_LAPSE_CPI_DEFLATED_RETAIL_SALES
+    observation_period: 2025-10-01
+    indicator_ids:
+      - US_REAL_RETAIL_SALES
+    reason: >-
+      Real retail sales are deflated with the CPI. With no October 2025 CPI the
+      deflated series has no October 2025 observation.
+    official_source_url: https://www.bls.gov/cpi/additional-resources/2025-federal-government-shutdown-impact-cpi.htm
+    known_since: 2025-12-18
+    verified_at: 2026-11-14

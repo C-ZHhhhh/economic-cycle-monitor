@@ -18,12 +18,24 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from agents.macro.current_run import (
+    compute_current_context,
+    persist_current_context,
+    promote_previous_month_end,
+)
 from agents.macro.explanation_config import load_explanation_authority
 from agents.macro.explanation_llm import MockStructuredExplanationClient
 from agents.macro.explanation_persistence import persist_explanation_result
 from agents.macro.explanation_report import render_deterministic_report
 from agents.macro.explanation_service import MacroExplanationService
 from agents.macro.service import create_mock_run as create_mock_run_service
+from agents.macro.visual_report import (
+    build_history_baseline,
+    build_report_data,
+    load_report_glossary,
+    persist_history_baseline,
+    render_visual_report,
+)
 from app.composites.schemas import EvaluationMode
 from app.data_pipeline.bea_service import BeaPipelineService
 from app.data_pipeline.bls_service import BlsPipelineService
@@ -317,6 +329,153 @@ def explain_macro(
     typer.echo(f"OK: persisted macro explanation {run_id}")
 
 
+def _print_report_summary(data: dict[str, Any], paths: list[Path]) -> None:
+    """Print the headline and scores as short aligned lines instead of raw objects."""
+    current = data["cur"]
+    text = data["text"]
+
+    def signed(value: float | None) -> str:
+        if value is None:
+            return "  无值"
+        return f"{value:+.2f}".replace("-", "−")
+
+    typer.echo("")
+    typer.echo(f"美国宏观周期　{text['dateline']}")
+    typer.echo(text["verdict"])
+    typer.echo("")
+    for label, key in (("增长得分", "g"), ("通胀压力得分", "i")):
+        lag = current["traj"][key]["lag_value"]
+        typer.echo(f"  {label:<8}{signed(current[key])}    3 个月前 {signed(lag)}")
+    typer.echo("")
+    by_id = {item["id"]: item for item in current["pillars"]}
+    for title, ids in (
+        ("增长支柱", current["growth_pillars"]),
+        ("背景信号", current["context_pillars"]),
+    ):
+        typer.echo(f"  {title}")
+        for pillar_id in ids:
+            item = by_id[pillar_id]
+            typer.echo(f"    {signed(item['v'])}  {item['name']}（{item['ok']}/{item['n']}）")
+    for line in text["rel_points"]:
+        typer.echo(f"  ! {line}")
+    typer.echo("")
+    for path in paths:
+        typer.echo(f"报告已生成：{path}")
+
+
+@app.command("import-macro-history")
+def import_macro_history(
+    source: Path = typer.Option(..., "--from", exists=True, dir_okay=False, readable=True),
+) -> None:
+    """Import a Stage 3F production-results file as the report's history baseline."""
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    try:
+        with source.open(encoding="utf-8") as handle:
+            baseline = build_history_baseline(handle)
+        with db_session(engine) as session:
+            persist_history_baseline(session, baseline, git_commit=_local_git_commit())
+    except (KeyError, ValueError) as exc:
+        _fail(f"History baseline could not be imported: {exc}")
+    except (SQLAlchemyError, OSError):
+        _fail("History baseline could not be imported")
+    finally:
+        engine.dispose()
+    typer.echo(
+        f"OK: imported {baseline['evaluation_count']} evaluations "
+        f"({baseline['first_evaluation_as_of']} to {baseline['last_evaluation_as_of']})"
+    )
+
+
+@app.command("run-macro-report")
+def run_macro_report(
+    refresh: bool = typer.Option(
+        True, "--refresh/--no-refresh", help="Fetch the newest data from every source first."
+    ),
+    compute: bool = typer.Option(
+        True, "--compute/--render-only", help="Recompute, or render the newest stored snapshot."
+    ),
+    output: Path | None = typer.Option(None, "--output", help="HTML file to write."),
+    fragment: Path | None = typer.Option(
+        None, "--fragment", help="Also write the page without its HTML shell."
+    ),
+) -> None:
+    """Refresh data, compute the current state, store it, and write the visual report."""
+    settings = _load_settings()
+    engine = create_database_engine(settings.database_url)
+    git_commit = _local_git_commit()
+    try:
+        if refresh and compute:
+            indicator_ids = [item.indicator_id for item in load_source_registry().policies]
+            typer.echo(f"1/3 刷新数据（{len(indicator_ids)} 项指标）…")
+            refreshed = asyncio.run(
+                CurrentRefreshRunner(engine, settings).run(
+                    CurrentRefreshRequest(indicator_ids=indicator_ids, realign_on_conflict=True)
+                )
+            )
+            failed = sorted(
+                {item.indicator_id for item in refreshed.provider_results if not item.success}
+                | {item.indicator_id for item in refreshed.comparisons if not item.success}
+            )
+            typer.echo(
+                f"    完成：{refreshed.status}"
+                + (
+                    f"；重新对齐 {len(refreshed.realigned_indicator_ids)} 项"
+                    if refreshed.realigned_indicator_ids
+                    else ""
+                )
+                + (f"；未成功 {len(failed)} 项：{', '.join(failed)}" if failed else "")
+            )
+        if compute:
+            typer.echo("2/3 计算当前状态…")
+            with db_session(engine) as session:
+                context = asyncio.run(compute_current_context(session))
+                stored = persist_current_context(session, context, git_commit=git_commit)
+                closed = promote_previous_month_end(
+                    session, context.evaluation_as_of, git_commit=git_commit
+                )
+            typer.echo(
+                "    "
+                + ("已存入新快照" if stored is not None else "结果与已存快照相同，未重复存入")
+                + (f"；{closed} 的快照记为上月收尾" if closed is not None else "")
+            )
+        typer.echo("3/3 生成报告…")
+        with db_session(engine) as session:
+            service = MacroExplanationService(session, load_explanation_authority())
+            snapshot = service.build_snapshot(evaluation_mode=EvaluationMode.CURRENT)
+            loaded = service.loader.load(evaluation_mode=EvaluationMode.CURRENT)
+            data = build_report_data(
+                session,
+                loaded=loaded,
+                snapshot=snapshot,
+                glossary=load_report_glossary(),
+                generated_on=date.today(),
+            )
+        as_of = data["meta"]["as_of"]
+        targets = (
+            [output]
+            if output is not None
+            else [
+                settings.output_dir / f"us_macro_report_{as_of}.html",
+                settings.output_dir / "us_macro_report_latest.html",
+            ]
+        )
+        page = render_visual_report(data)
+        for target in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(page, encoding="utf-8")
+        if fragment is not None:
+            fragment.parent.mkdir(parents=True, exist_ok=True)
+            fragment.write_text(render_visual_report(data, standalone=False), encoding="utf-8")
+    except (RuntimeError, ValueError, ValidationError) as exc:
+        _fail(f"Macro report could not be produced: {exc}")
+    except (SQLAlchemyError, OSError):
+        _fail("Macro report could not be produced")
+    finally:
+        engine.dispose()
+    _print_report_summary(data, targets)
+
+
 def _parse_month(value: str, option_name: str) -> date:
     """Parse an inclusive Census month without accepting day-level ambiguity."""
     try:
@@ -562,13 +721,20 @@ def validate_current_freshness_config_command(
 def refresh_current_command(
     indicator: list[str] = typer.Option(..., "--indicator"),
     dry_run: bool = typer.Option(False),
+    realign_on_conflict: bool = typer.Option(
+        False,
+        "--realign-on-conflict",
+        help="Re-fetch full history for both sources when a revision leaves them in conflict.",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Refresh registry-declared current primary and fallback sources."""
     settings = _load_settings()
     engine = create_database_engine(settings.database_url)
     try:
-        request = CurrentRefreshRequest(indicator_ids=indicator, dry_run=dry_run)
+        request = CurrentRefreshRequest(
+            indicator_ids=indicator, dry_run=dry_run, realign_on_conflict=realign_on_conflict
+        )
         result = asyncio.run(CurrentRefreshRunner(engine, settings).run(request))
     except (SQLAlchemyError, OSError, RuntimeError, ValueError, ValidationError):
         _fail("Current refresh orchestration stopped safely")

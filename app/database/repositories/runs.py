@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.models import AgentReport, AgentRun
@@ -25,9 +25,7 @@ def add_run_with_report(
 
 def list_runs(session: Session, *, offset: int = 0, limit: int = 50) -> Sequence[AgentRun]:
     """Return recent runs in reverse chronological order."""
-    statement: Select[tuple[AgentRun]] = (
-        select(AgentRun).order_by(AgentRun.started_at.desc()).offset(offset).limit(limit)
-    )
+    statement = select(AgentRun).order_by(AgentRun.started_at.desc()).offset(offset).limit(limit)
     return session.scalars(statement).all()
 
 
@@ -38,7 +36,7 @@ def get_run(session: Session, run_id: UUID) -> AgentRun | None:
 
 def get_reports_for_run(session: Session, run_id: UUID) -> Sequence[AgentReport]:
     """Return reports associated with a run."""
-    statement: Select[tuple[AgentReport]] = (
+    statement = (
         select(AgentReport)
         .where(AgentReport.run_id == run_id)
         .order_by(AgentReport.created_at.asc())
@@ -52,7 +50,7 @@ def get_report_for_run_type(
     report_type: str,
 ) -> AgentReport | None:
     """Return one typed report for a run without triggering any computation."""
-    statement: Select[tuple[AgentReport]] = select(AgentReport).where(
+    statement = select(AgentReport).where(
         AgentReport.run_id == run_id,
         AgentReport.report_type == report_type,
     )
@@ -61,7 +59,7 @@ def get_report_for_run_type(
 
 def get_latest_report_by_type(session: Session, report_type: str) -> AgentReport | None:
     """Return the newest persisted report of one type."""
-    statement: Select[tuple[AgentReport]] = (
+    statement = (
         select(AgentReport)
         .where(AgentReport.report_type == report_type)
         .order_by(AgentReport.created_at.desc(), AgentReport.id.desc())

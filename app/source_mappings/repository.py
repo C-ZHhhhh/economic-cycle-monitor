@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from decimal import Decimal
 
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.models import IndicatorSourceMapping
@@ -152,7 +152,7 @@ def list_source_mappings(
     limit: int = 100,
 ) -> Sequence[IndicatorSourceMapping]:
     """Return a bounded mapping page."""
-    statement: Select[tuple[IndicatorSourceMapping]] = select(IndicatorSourceMapping)
+    statement = select(IndicatorSourceMapping)
     if source is not None:
         statement = statement.where(IndicatorSourceMapping.source == source)
     if indicator_id is not None:
