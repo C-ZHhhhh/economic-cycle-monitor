@@ -3,10 +3,26 @@
 ## Project goal and current scope
 
 This repository is the sole codebase for a personal global economic-cycle
-multi-agent monitoring system. The current scope is only Stage 2 of the US Macro
-Cycle Agent: FRED ingestion, indicator registration, revisions, vintages, and data
-quality. Do not implement other agents or Stage 3 features, scoring, or regime
-functionality without explicit approval.
+multi-agent monitoring system. One agent exists today, the US Macro Cycle Agent,
+and it is implemented end to end:
+
+- Stage 2: source ingestion for 33 indicators (primaries: BLS 14, Census 6,
+  BEA 5, Federal Reserve 4, DOL 2, FRED 2; FRED as the fallback for the other
+  31; ALFRED for point-in-time vintages), revisions, data quality, and the
+  hashed source registry.
+- Stage 3A-3E: features, normalized signals, pillars, the growth and inflation
+  composite state, and the regime classification.
+- Stage 3F: the historical validation framework.
+- The explanation agent, the current-run orchestration, and the visual report.
+
+The Stage 2 source registry and the Stage 3A-3E specifications are frozen
+authorities bound to each other by hash. Do not change a formula, window, weight,
+threshold, source policy, or any hashed specification without explicit approval;
+such a change needs its own reviewed version.
+
+Not implemented, and not to be added without explicit approval: other agents, a
+synthesis agent, nowcasting, regime probabilities, a live LLM provider, and
+scheduling.
 
 ## Runtime and resource constraints
 
@@ -25,7 +41,7 @@ functionality without explicit approval.
 - Use UTC-aware datetimes.
 - Do not use bare `except` clauses or suppress exceptions silently.
 - Keep database Session lifetimes explicit and avoid circular imports.
-- Avoid abstractions that do not have a current Stage 2 use.
+- Avoid abstractions that do not have a current use.
 - Never hard-code indicator weights, scoring thresholds, API keys, or an LLM model
   name in Python. Version weights and thresholds in `config/`.
 - Agent output must validate against the canonical Pydantic schema.
